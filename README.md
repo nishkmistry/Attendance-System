@@ -39,8 +39,9 @@ An automated, web-based **Facial Attendance System** built with **Python**, **Fl
 * `pip`
 
 ### 2. Install Dependencies
+Install all required dependencies using `requirements.txt`:
 ```bash
-pip install opencv-python opencv-contrib-python numpy flask
+pip install -r requirements.txt
 ```
 
 ---
