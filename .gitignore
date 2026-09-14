@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+attendance.db
+*.log
+trainer.yml
+dataset/
+/home/jules/verification/
