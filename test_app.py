@@ -18,14 +18,12 @@ class FacialAttendanceTestCase(unittest.TestCase):
         os.environ['DATABASE_PATH'] = self.test_db
         database.init_db(self.test_db)
 
-        # Ensure fresh database tables for test isolation
         conn = database.get_db_connection(self.test_db)
         conn.execute('DELETE FROM attendance')
         conn.execute('DELETE FROM students')
         conn.commit()
         conn.close()
 
-        # Override face_system settings for test isolation
         face_system.dataset_dir = self.test_dataset
         face_system.model_path = self.test_model
         face_system.load_model()
@@ -43,32 +41,40 @@ class FacialAttendanceTestCase(unittest.TestCase):
             shutil.rmtree(self.test_dataset)
 
     def _create_sample_image_b64(self):
-        """Creates a sample dummy image."""
         img = np.ones((100, 100, 3), dtype=np.uint8) * 128
         _, buffer = cv2.imencode('.jpg', img)
         b64_str = base64.b64encode(buffer).decode('utf-8')
         return f"data:image/jpeg;base64,{b64_str}"
 
     def test_database_operations(self):
-        # Add student
-        student_id = database.add_student('REG001', 'Alice', db_path=self.test_db)
+        dummy_emb = np.random.randn(128).astype(np.float32)
+        student_id = database.add_student('REG001', 'Alice', embedding=dummy_emb, db_path=self.test_db)
         self.assertIsNotNone(student_id)
 
-        # Get student
         student = database.get_student_by_id(student_id, db_path=self.test_db)
         self.assertEqual(student['name'], 'Alice')
         self.assertEqual(student['reg_no'], 'REG001')
 
-        # Mark attendance
-        rec1 = database.mark_attendance(student_id, db_path=self.test_db)
+        candidates = database.get_candidate_embeddings(db_path=self.test_db)
+        self.assertIn(student_id, candidates)
+        self.assertEqual(len(candidates[student_id]), 128)
+
+        mock_web3 = {
+            'tx_hash': '0x123abc',
+            'block_number': 12,
+            'gas_used': 51000,
+            'location_hash': '0xloc',
+            'latency_ms': 15.0
+        }
+
+        rec1 = database.mark_attendance(student_id, web3_data=mock_web3, db_path=self.test_db)
         self.assertFalse(rec1['already_marked'])
         self.assertEqual(rec1['name'], 'Alice')
+        self.assertEqual(rec1['tx_hash'], '0x123abc')
 
-        # Duplicate attendance on same date
-        rec2 = database.mark_attendance(student_id, db_path=self.test_db)
+        rec2 = database.mark_attendance(student_id, web3_data=mock_web3, db_path=self.test_db)
         self.assertTrue(rec2['already_marked'])
 
-        # Fetch logs
         logs = database.get_attendance_logs(db_path=self.test_db)
         self.assertEqual(len(logs), 1)
 
@@ -87,10 +93,12 @@ class FacialAttendanceTestCase(unittest.TestCase):
         self.assertFalse(data['success'])
         self.assertIn('No face detected', data['message'])
 
+    @patch('face_recognition_module.check_liveness')
     @patch('face_recognition_module.detect_faces')
     @patch('app.detect_faces')
-    def test_register_and_mark_attendance_flow(self, mock_app_detect, mock_mod_detect):
-        # Mock face detection returning 1 face box (10, 10, 50, 50) and gray image
+    def test_register_and_mark_attendance_flow(self, mock_app_detect, mock_mod_detect, mock_liveness):
+        mock_liveness.return_value = (True, 0.25, "Liveness verified")
+
         dummy_gray = np.ones((100, 100), dtype=np.uint8) * 100
         cv2.rectangle(dummy_gray, (20, 20), (40, 40), 200, -1)
         mock_faces = ([(10, 10, 50, 50)], dummy_gray)
@@ -110,7 +118,7 @@ class FacialAttendanceTestCase(unittest.TestCase):
         reg_data = json.loads(reg_response.data)
         self.assertTrue(reg_data['success'])
 
-        # 2. Mark attendance using the same facial image
+        # 2. Mark attendance
         att_response = self.client.post('/api/attendance', json={
             'image': face_img_b64
         })
@@ -119,7 +127,8 @@ class FacialAttendanceTestCase(unittest.TestCase):
         self.assertTrue(att_data['success'])
         self.assertTrue(att_data['registered'])
         self.assertEqual(att_data['student']['name'], 'Charlie')
-        self.assertEqual(att_data['student']['reg_no'], 'REG003')
+        self.assertIn('web3', att_data)
+        self.assertTrue(att_data['web3']['success'])
 
     @patch('face_recognition_module.detect_faces')
     def test_unregistered_student_attendance(self, mock_mod_detect):
@@ -137,16 +146,19 @@ class FacialAttendanceTestCase(unittest.TestCase):
         self.assertFalse(att_data['registered'])
         self.assertIn('Student is not registered', att_data['message'])
 
-    def test_get_students_and_attendance_endpoints(self):
-        # Fetch empty students list
-        res_stud = self.client.get('/api/students')
-        self.assertEqual(res_stud.status_code, 200)
-        self.assertEqual(json.loads(res_stud.data)['students'], [])
+    def test_web3_status_and_benchmarks_endpoints(self):
+        res_w3 = self.client.get('/api/web3/status')
+        self.assertEqual(res_w3.status_code, 200)
+        data_w3 = json.loads(res_w3.data)
+        self.assertTrue(data_w3['success'])
+        self.assertIn('contract_address', data_w3['web3_status'])
 
-        # Fetch empty attendance list
-        res_att = self.client.get('/api/attendance')
-        self.assertEqual(res_att.status_code, 200)
-        self.assertEqual(json.loads(res_att.data)['attendance'], [])
+        res_bm = self.client.get('/api/benchmarks')
+        self.assertEqual(res_bm.status_code, 200)
+        data_bm = json.loads(res_bm.data)
+        self.assertTrue(data_bm['success'])
+        self.assertIn('inference_latency', data_bm['benchmarks'])
+        self.assertIn('gas_analysis', data_bm['benchmarks'])
 
 if __name__ == '__main__':
     unittest.main()

@@ -11,6 +11,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const attStudentName = document.getElementById('att-student-name');
     const attStudentReg = document.getElementById('att-student-reg');
     const attTime = document.getElementById('att-time');
+    const attInfLatency = document.getElementById('att-inf-latency');
+    const attTxLink = document.getElementById('att-tx-link');
+    const attBlockNum = document.getElementById('att-block-num');
+    const attGasUsed = document.getElementById('att-gas-used');
+    const attChainLatency = document.getElementById('att-chain-latency');
 
     const regVideo = document.getElementById('reg-video');
     const regCanvas = document.getElementById('reg-canvas');
@@ -24,8 +29,25 @@ document.addEventListener('DOMContentLoaded', () => {
     const attendanceTableBody = document.getElementById('attendance-table-body');
     const btnRefreshStudents = document.getElementById('btn-refresh-students');
     const btnRefreshLogs = document.getElementById('btn-refresh-logs');
+    const btnRefreshBenchmarks = document.getElementById('btn-refresh-benchmarks');
 
-    // Initialize camera stream
+    // Admin elements
+    const admTermAddr = document.getElementById('adm-term-addr');
+    const admContractAddr = document.getElementById('adm-contract-addr');
+    const admBlockNum = document.getElementById('adm-block-num');
+    const admNodeStatus = document.getElementById('adm-node-status');
+
+    // Benchmark elements
+    const bmInfLatency = document.getElementById('bm-inf-latency');
+    const bmChainLatency = document.getElementById('bm-chain-latency');
+    const bmAccuracy = document.getElementById('bm-accuracy');
+    const bmFar = document.getElementById('bm-far');
+    const bmFrr = document.getElementById('bm-frr');
+    const bmGasSavings = document.getElementById('bm-gas-savings');
+    const bmGasIndiv = document.getElementById('bm-gas-indiv');
+    const bmGasBatch = document.getElementById('bm-gas-batch');
+    const bmTotalTx = document.getElementById('bm-total-tx');
+
     async function startCamera(videoElement) {
         if (currentStream) {
             currentStream.getTracks().forEach(track => track.stop());
@@ -42,7 +64,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Switch tab handler
     const tabEls = document.querySelectorAll('button[data-bs-toggle="pill"]');
     tabEls.forEach(tabEl => {
         tabEl.addEventListener('shown.bs.tab', (event) => {
@@ -57,14 +78,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 loadStudents();
                 loadAttendanceLogs();
+            } else if (targetId === '#admin-pane') {
+                if (currentStream) {
+                    currentStream.getTracks().forEach(track => track.stop());
+                }
+                loadWeb3Status();
+                loadBenchmarks();
             }
         });
     });
 
-    // Start default tab camera (Attendance tab)
     startCamera(attVideo);
+    loadWeb3Status();
 
-    // Capture frame base64 from video element
     function captureFrame(videoElement, canvasElement) {
         const width = videoElement.videoWidth || 640;
         const height = videoElement.videoHeight || 480;
@@ -75,10 +101,9 @@ document.addEventListener('DOMContentLoaded', () => {
         return canvasElement.toDataURL('image/jpeg', 0.85);
     }
 
-    // Handle Mark Attendance
     btnMarkAttendance.addEventListener('click', async () => {
         btnMarkAttendance.disabled = true;
-        btnMarkAttendance.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Scanning...';
+        btnMarkAttendance.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Scanning & Dispatching On-Chain...';
 
         const imageB64 = captureFrame(attVideo, attCanvas);
 
@@ -95,23 +120,31 @@ document.addEventListener('DOMContentLoaded', () => {
             attResultState.classList.remove('d-none');
 
             if (data.success && data.registered) {
-                // Registered student successfully recognized & marked
                 attStatusBadge.className = 'alert alert-success fw-bold text-start mb-3';
                 attStatusBadge.innerHTML = `<i class="bi bi-check-circle-fill me-2"></i>${data.message}`;
 
                 attStudentName.textContent = data.student.name;
                 attStudentReg.textContent = data.student.reg_no;
                 attTime.textContent = data.attendance.timestamp;
+                attInfLatency.textContent = data.inference_latency_ms || '--';
+
+                if (data.web3) {
+                    const txHash = data.web3.tx_hash || 'N/A';
+                    attTxLink.textContent = txHash;
+                    attTxLink.href = data.explorer_link || `https://sepolia.etherscan.io/tx/${txHash}`;
+                    attBlockNum.textContent = data.web3.block_number || '--';
+                    attGasUsed.textContent = data.web3.gas_used ? data.web3.gas_used.toLocaleString() : '--';
+                    attChainLatency.textContent = data.web3.latency_ms || '--';
+                }
+
                 attStudentInfo.classList.remove('d-none');
             } else if (!data.registered) {
-                // Student NOT registered or not recognized
                 attStatusBadge.className = 'alert alert-danger fw-bold text-start mb-3';
-                attStatusBadge.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-2"></i>Student is not registered.`;
+                attStatusBadge.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-2"></i>${data.message || 'Student is not registered.'}`;
                 attStudentInfo.classList.add('d-none');
             } else {
-                // Other error (e.g., no face detected)
                 attStatusBadge.className = 'alert alert-warning fw-bold text-start mb-3';
-                attStatusBadge.innerHTML = `<i class="bi bi-info-circle-fill me-2"></i>${data.message || 'Face scan error'}`;
+                attStatusBadge.innerHTML = `<i class="bi bi-shield-exclamation me-2"></i>${data.message || 'Face scan error'}`;
                 attStudentInfo.classList.add('d-none');
             }
         } catch (err) {
@@ -126,7 +159,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Handle Student Registration
     regForm.addEventListener('submit', async (e) => {
         e.preventDefault();
 
@@ -141,7 +173,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         btnRegister.disabled = true;
-        btnRegister.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Registering...';
+        btnRegister.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Extracting Embedding...';
 
         const imageB64 = captureFrame(regVideo, regCanvas);
 
@@ -166,14 +198,13 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err) {
             regAlert.classList.remove('d-none');
             regAlert.className = 'alert alert-danger';
-            regAlert.innerHTML = `<i class="bi bi-x-circle me-1"></i>Failed to register student.`;
+            regAlert.innerHTML = `<i class="bi bi-x-circle me-1"></i>Failed to register student vector.`;
         } finally {
             btnRegister.disabled = false;
-            btnRegister.innerHTML = '<i class="bi bi-person-check-fill me-2"></i>Capture & Register';
+            btnRegister.innerHTML = '<i class="bi bi-person-check-fill me-2"></i>Capture & Register Vector';
         }
     });
 
-    // Fetch and display registered students
     async function loadStudents() {
         try {
             const res = await fetch('/api/students');
@@ -184,37 +215,85 @@ document.addEventListener('DOMContentLoaded', () => {
                         <td>${s.id}</td>
                         <td class="fw-semibold">${s.reg_no}</td>
                         <td>${s.name}</td>
+                        <td><span class="badge ${s.has_embedding ? 'bg-success' : 'bg-secondary'}">${s.has_embedding ? '128-d Vector Saved' : 'No Vector'}</span></td>
                     </tr>
                 `).join('');
             } else {
-                studentsTableBody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-3">No students registered yet.</td></tr>';
+                studentsTableBody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">No students registered yet.</td></tr>';
             }
         } catch (err) {
             console.error(err);
         }
     }
 
-    // Fetch and display attendance logs
     async function loadAttendanceLogs() {
         try {
             const res = await fetch('/api/attendance');
             const data = await res.json();
             if (data.success && data.attendance.length > 0) {
-                attendanceTableBody.innerHTML = data.attendance.map(a => `
+                attendanceTableBody.innerHTML = data.attendance.map(a => {
+                    const txHash = a.tx_hash ? a.tx_hash : 'N/A';
+                    const link = a.tx_hash ? `https://sepolia.etherscan.io/tx/${a.tx_hash}` : '#';
+                    return `
                     <tr>
-                        <td class="fw-semibold">${a.reg_no}</td>
-                        <td>${a.name}</td>
+                        <td class="fw-semibold">${a.reg_no}<br><small class="text-muted">${a.name}</small></td>
                         <td><small class="text-muted">${a.timestamp}</small></td>
+                        <td>
+                            ${a.tx_hash ? `<a href="${link}" target="_blank" class="font-monospace small text-truncate d-inline-block" style="max-width: 150px;">${txHash}</a>` : '<span class="text-muted small">Pending</span>'}
+                        </td>
+                        <td><span class="badge bg-light text-dark border">${a.block_number || '--'}</span></td>
+                        <td><small>${a.gas_used ? a.gas_used.toLocaleString() : '--'}</small></td>
                     </tr>
-                `).join('');
+                `}).join('');
             } else {
-                attendanceTableBody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-3">No attendance logs yet.</td></tr>';
+                attendanceTableBody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">No attendance logs yet.</td></tr>';
             }
         } catch (err) {
             console.error(err);
         }
     }
 
+    async function loadWeb3Status() {
+        try {
+            const res = await fetch('/api/web3/status');
+            const data = await res.json();
+            if (data.success && data.web3_status) {
+                const s = data.web3_status;
+                if (admTermAddr) admTermAddr.textContent = s.terminal_address || 'N/A';
+                if (admContractAddr) admContractAddr.textContent = s.contract_address || 'N/A';
+                if (admBlockNum) admBlockNum.textContent = s.block_number !== undefined ? s.block_number : '--';
+                if (admNodeStatus) {
+                    admNodeStatus.textContent = s.connected ? 'Connected' : 'Disconnected';
+                    admNodeStatus.className = s.connected ? 'fs-4 fw-bold text-success' : 'fs-4 fw-bold text-danger';
+                }
+            }
+        } catch (err) {
+            console.error("Web3 status error:", err);
+        }
+    }
+
+    async function loadBenchmarks() {
+        try {
+            const res = await fetch('/api/benchmarks');
+            const data = await res.json();
+            if (data.success && data.benchmarks) {
+                const bm = data.benchmarks;
+                if (bmInfLatency) bmInfLatency.textContent = `${bm.inference_latency.avg_ms} ms`;
+                if (bmChainLatency) bmChainLatency.textContent = `${bm.on_chain_latency.avg_ms} ms`;
+                if (bmAccuracy) bmAccuracy.textContent = bm.match_accuracy.accuracy;
+                if (bmFar) bmFar.textContent = bm.match_accuracy.FAR;
+                if (bmFrr) bmFrr.textContent = bm.match_accuracy.FRR;
+                if (bmGasSavings) bmGasSavings.textContent = `${bm.gas_analysis.gas_savings_percent}%`;
+                if (bmGasIndiv) bmGasIndiv.textContent = `${bm.gas_analysis.individual_call_avg_gas.toLocaleString()} gas`;
+                if (bmGasBatch) bmGasBatch.textContent = `${bm.gas_analysis.batched_call_avg_gas.toLocaleString()} gas`;
+                if (bmTotalTx) bmTotalTx.textContent = bm.total_transactions;
+            }
+        } catch (err) {
+            console.error("Benchmarks load error:", err);
+        }
+    }
+
     btnRefreshStudents.addEventListener('click', loadStudents);
     btnRefreshLogs.addEventListener('click', loadAttendanceLogs);
+    if (btnRefreshBenchmarks) btnRefreshBenchmarks.addEventListener('click', loadBenchmarks);
 });
