@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import os
 import json
 import numpy as np
@@ -13,7 +13,6 @@ class FacialAttendanceTestCase(unittest.TestCase):
     def setUp(self):
         self.test_db = 'test_attendance.db'
         self.test_dataset = 'test_dataset'
-        self.test_model = 'test_trainer.yml'
 
         os.environ['DATABASE_PATH'] = self.test_db
         database.init_db(self.test_db)
@@ -27,7 +26,6 @@ class FacialAttendanceTestCase(unittest.TestCase):
 
         # Override face_system settings for test isolation
         face_system.dataset_dir = self.test_dataset
-        face_system.model_path = self.test_model
         face_system.load_model()
 
         app.config['TESTING'] = True
@@ -36,8 +34,6 @@ class FacialAttendanceTestCase(unittest.TestCase):
     def tearDown(self):
         if os.path.exists(self.test_db):
             os.remove(self.test_db)
-        if os.path.exists(self.test_model):
-            os.remove(self.test_model)
         if os.path.exists(self.test_dataset):
             import shutil
             shutil.rmtree(self.test_dataset)
@@ -87,16 +83,18 @@ class FacialAttendanceTestCase(unittest.TestCase):
         self.assertFalse(data['success'])
         self.assertIn('No face detected', data['message'])
 
+    @patch('face_recognition_module.FaceRecognitionSystem.extract_embedding')
     @patch('face_recognition_module.detect_faces')
     @patch('app.detect_faces')
-    def test_register_and_mark_attendance_flow(self, mock_app_detect, mock_mod_detect):
-        # Mock face detection returning 1 face box (10, 10, 50, 50) and gray image
+    def test_register_and_mark_attendance_flow(self, mock_app_detect, mock_mod_detect, mock_extract_embedding):
         dummy_gray = np.ones((100, 100), dtype=np.uint8) * 100
-        cv2.rectangle(dummy_gray, (20, 20), (40, 40), 200, -1)
         mock_faces = ([(10, 10, 50, 50)], dummy_gray)
 
         mock_app_detect.return_value = mock_faces
         mock_mod_detect.return_value = mock_faces
+        # Return identical embeddings for exact match
+        dummy_embedding = np.ones((128,), dtype=np.float32)
+        mock_extract_embedding.return_value = dummy_embedding
 
         face_img_b64 = self._create_sample_image_b64()
 
@@ -147,6 +145,32 @@ class FacialAttendanceTestCase(unittest.TestCase):
         res_att = self.client.get('/api/attendance')
         self.assertEqual(res_att.status_code, 200)
         self.assertEqual(json.loads(res_att.data)['attendance'], [])
+
+    @patch('app.get_drone_cap')
+    def test_drone_camera_endpoints(self, mock_get_drone_cap):
+        # 1. Test drone config GET and POST
+        res_get_cfg = self.client.get('/api/drone/config')
+        self.assertEqual(res_get_cfg.status_code, 200)
+        self.assertTrue(json.loads(res_get_cfg.data)['success'])
+
+        res_post_cfg = self.client.post('/api/drone/config', json={'stream_url': 'rtsp://10.0.0.1:554/live'})
+        self.assertEqual(res_post_cfg.status_code, 200)
+        data_cfg = json.loads(res_post_cfg.data)
+        self.assertTrue(data_cfg['success'])
+        self.assertEqual(data_cfg['stream_url'], 'rtsp://10.0.0.1:554/live')
+
+        # 2. Test drone snapshot
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        dummy_frame = np.ones((100, 100, 3), dtype=np.uint8) * 200
+        mock_cap.read.return_value = (True, dummy_frame)
+        mock_get_drone_cap.return_value = mock_cap
+
+        res_snap = self.client.get('/api/drone/snapshot')
+        self.assertEqual(res_snap.status_code, 200)
+        data_snap = json.loads(res_snap.data)
+        self.assertTrue(data_snap['success'])
+        self.assertTrue(data_snap['image'].startswith('data:image/jpeg;base64,'))
 
 if __name__ == '__main__':
     unittest.main()

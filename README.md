@@ -1,34 +1,35 @@
-# Facial Attendance System
+# Facial Attendance System (Drone & DeepFace AI Integrated)
 
-An automated, web-based **Facial Attendance System** built with **Python**, **Flask**, **SQLite**, and **OpenCV** (using Haar Cascade classifier for face detection and Local Binary Patterns Histograms - LBPH for face recognition).
+An automated, web-based **Facial Attendance System** built with **Python**, **Flask**, **SQLite**, **DeepFace AI**, **OpenCV**, and **Drone Camera Stream Integration**.
 
 ---
 
 ## 📌 Technology Stack & Concept
 
-* **Backend Web Framework:** Python 3 & Flask
+* **Backend Framework:** Python 3 & Flask
 * **Database:** SQLite3 (stores student details and attendance logs)
-* **Computer Vision & Face Recognition:**
-  * **OpenCV (`cv2`)**: Used for real-time video frame decoding and processing.
-  * **Haar Cascade Classifier**: Used for detecting human faces in images.
-  * **LBPH (Local Binary Patterns Histograms) Face Recognizer**: Used for training face model features and recognizing individual faces based on texture histogram analysis.
-* **Frontend UI:** HTML5, CSS3, JavaScript (Fetch API & MediaDevices API for webcam stream), Bootstrap 5.
+* **Facial Recognition & Deep Learning:**
+  * **DeepFace (VGG-Face model)**: Generates high-dimensional facial embeddings for exact identity matching using cosine similarity.
+  * **OpenCV (`cv2`)**: Used for video stream decoding, frame capture, and Haar Cascade face detection.
+* **Drone Camera Integration:**
+  * Supports direct video feeds from Drone camera streams (RTSP, UDP, HTTP MJPEG stream, or video device index).
+* **Frontend UI:** HTML5, CSS3, JavaScript (Fetch API, Bootstrap 5, live stream player with camera source switcher).
 
 ---
 
 ## 🚀 Key Features
 
-1. **Facial Attendance Marking (No Manual Input Required)**
-   * When a student stands in front of the camera and clicks **"Scan Face & Mark Attendance"**, the system uses facial recognition alone to identify the student.
-   * If recognized, attendance is logged in the database for the day with a timestamp.
-   * If the student's face is not in the system, it alerts that **"Student is not registered."**
+1. **Drone Camera Stream & Local Webcam Support**
+   * Seamlessly stream video directly from a **Drone Camera** (e.g. RTSP `rtsp://<drone-ip>:554/live`, HTTP/UDP) or switch to a **Local Webcam**.
+   * Configure Drone stream URLs dynamically via the web UI settings modal or environment variables.
 
-2. **Student Registration**
-   * Students provide their **Full Name** and **Registration Number** alongside a snapshot captured via webcam.
-   * The facial image is stored and automatically trains/updates the LBPH facial recognition model.
+2. **DeepFace AI Facial Recognition**
+   * Deep learning facial feature extraction and distance matching using DeepFace.
+   * High accuracy verification without manual entry.
 
-3. **Attendance Logs & Student Records**
-   * Tabbed interface displaying all registered students and real-time attendance logs.
+3. **Student Registration & Attendance Logs**
+   * Capture student face snapshots via Drone Stream or Webcam and associate with Name & Registration Number.
+   * Automatic daily attendance logging with duplicate detection and timestamp records.
 
 ---
 
@@ -36,9 +37,28 @@ An automated, web-based **Facial Attendance System** built with **Python**, **Fl
 
 ### 1. Requirements
 * Python 3.8+
-* `pip`
+* `pip` and `venv` (Python Virtual Environment)
 
-### 2. Install Dependencies
+### 2. Setting Up Virtual Environment (`venv`)
+
+It is strongly recommended to use a Python virtual environment (`venv`) to run the system:
+
+```bash
+# Create virtual environment
+python3 -m venv venv
+
+# Activate virtual environment
+# On Linux / macOS:
+source venv/bin/activate
+
+# On Windows (Command Prompt):
+# venv\Scripts\activate.bat
+
+# On Windows (PowerShell):
+# venv\Scripts\Activate.ps1
+```
+
+### 3. Install Dependencies
 Install all required dependencies using `requirements.txt`:
 ```bash
 pip install -r requirements.txt
@@ -46,35 +66,54 @@ pip install -r requirements.txt
 
 ---
 
+## 🚁 Drone Camera Setup & Configuration
+
+You can configure the Drone Camera Stream source in two ways:
+
+1. **Via Environment Variable:**
+   Set `DRONE_STREAM_URL` before running the application:
+   ```bash
+   export DRONE_STREAM_URL="rtsp://192.168.1.1:554/live"
+   python3 app.py
+   ```
+2. **Via Web Interface:**
+   * Open the web app in your browser.
+   * Click **"Drone Stream Settings"** in the top navigation bar.
+   * Enter your Drone's RTSP stream URL (e.g., `rtsp://192.168.1.100:554/stream`), HTTP MJPEG URL, or camera index (`0`), then click **"Save & Reconnect"**.
+
+---
+
 ## 🏃 Usage & How to Run
 
 ### 1. Start the Server
-Run the Flask application:
+With `venv` activated, run the Flask application:
 ```bash
 python3 app.py
 ```
-By default, the server will start on `http://127.0.0.1:5000`.
+By default, the server starts on `http://127.0.0.1:5000`.
 
 ### 2. Access the Application
 Open your web browser and navigate to `http://127.0.0.1:5000`.
 
 ### 3. Workflow Guide
+* **Select Camera Source:**
+  * Toggle between **Drone Camera Stream** or **Local Webcam** using the active camera toolbar.
 * **Registering a Student:**
-  1. Click on the **Student Registration** tab.
-  2. Enter the student's **Full Name** and **Registration Number**.
-  3. Align face in front of the webcam and click **"Capture & Register"**.
+  1. Go to the **Student Registration** tab.
+  2. Enter **Full Name** and **Registration Number**.
+  3. Align the student's face in the live Drone/Webcam feed and click **"Capture & Register"**.
 * **Marking Attendance:**
   1. Go to the **Mark Attendance** tab.
-  2. Position face in front of the webcam and click **"Scan Face & Mark Attendance"**.
-  3. The system will recognize the student and display their attendance status. If unrecognized, it displays **"Student is not registered"**.
+  2. Position the student's face in front of the Drone/Webcam view and click **"Scan Face & Mark Attendance"**.
+  3. DeepFace will recognize the student and record attendance.
 * **Viewing Logs:**
-  1. Go to the **Attendance Logs & Students** tab to view the list of registered students and attendance records.
+  1. Open the **Attendance Logs & Students** tab to inspect student records and timestamped attendance logs.
 
 ---
 
 ## 🧪 Running Unit Tests
 
-Run the test suite using Python's built-in `unittest`:
+Run unit tests using Python's built-in `unittest`:
 ```bash
 python3 -m unittest test_app.py
 ```

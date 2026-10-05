@@ -1,6 +1,9 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response
 import os
 import cv2
+import time
+import base64
+import numpy as np
 import database
 from face_recognition_module import FaceRecognitionSystem, base64_to_image, detect_faces
 
@@ -12,9 +15,90 @@ database.init_db()
 # Initialize Face Recognition System
 face_system = FaceRecognitionSystem()
 
+# Drone Camera Stream Configuration
+DRONE_STREAM_URL = os.environ.get("DRONE_STREAM_URL", "0")  # Default to device video index or RTSP/HTTP URL
+drone_cap = None
+
+def get_drone_cap():
+    global drone_cap, DRONE_STREAM_URL
+    if drone_cap is not None and drone_cap.isOpened():
+        return drone_cap
+    source = DRONE_STREAM_URL
+    if source.isdigit():
+        source = int(source)
+    drone_cap = cv2.VideoCapture(source)
+    return drone_cap
+
+def generate_drone_frames():
+    """Generates MJPEG stream frames from drone camera stream source."""
+    while True:
+        cap = get_drone_cap()
+        if cap is None or not cap.isOpened():
+            # If camera opened failed, generate placeholder frame
+            frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(frame, "Drone Camera Offline / Reconnecting...", (50, 240),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            time.sleep(1.0)
+        else:
+            success, frame = cap.read()
+            if not success or frame is None:
+                frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                cv2.putText(frame, "No Frame Received from Drone Stream", (50, 240),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
+                time.sleep(0.5)
+
+        ret, buffer = cv2.imencode('.jpg', frame)
+        if not ret:
+            continue
+        frame_bytes = buffer.tobytes()
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+        time.sleep(0.03)
+
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/video_feed')
+def video_feed():
+    """Returns video stream feed from drone camera."""
+    return Response(generate_drone_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/api/drone/config', methods=['GET', 'POST'])
+def drone_config():
+    """Gets or sets drone stream source URL/device ID."""
+    global DRONE_STREAM_URL, drone_cap
+    if request.method == 'POST':
+        data = request.get_json() or {}
+        new_source = data.get('stream_url', '').strip()
+        if new_source:
+            DRONE_STREAM_URL = new_source
+            if drone_cap is not None:
+                drone_cap.release()
+                drone_cap = None
+            return jsonify({'success': True, 'message': f'Drone stream URL updated to {DRONE_STREAM_URL}', 'stream_url': DRONE_STREAM_URL})
+        return jsonify({'success': False, 'message': 'Invalid stream URL'}), 400
+
+    return jsonify({'success': True, 'stream_url': DRONE_STREAM_URL})
+
+@app.route('/api/drone/snapshot', methods=['GET'])
+def drone_snapshot():
+    """Captures single snapshot from current drone stream and returns base64 image string."""
+    cap = get_drone_cap()
+    if cap is None or not cap.isOpened():
+        return jsonify({'success': False, 'message': 'Drone camera stream unavailable'}), 503
+
+    success, frame = cap.read()
+    if not success or frame is None:
+        return jsonify({'success': False, 'message': 'Failed to capture frame from drone stream'}), 500
+
+    ret, buffer = cv2.imencode('.jpg', frame)
+    if not ret:
+        return jsonify({'success': False, 'message': 'Failed to encode captured frame'}), 500
+
+    b64_str = base64.b64encode(buffer).decode('utf-8')
+    image_data_url = f"data:image/jpeg;base64,{b64_str}"
+    return jsonify({'success': True, 'image': image_data_url})
 
 @app.route('/api/register', methods=['POST'])
 def register_student():
@@ -55,7 +139,7 @@ def register_student():
 
     try:
         student_id = database.add_student(reg_no, name)
-        # Save face image and train model
+        # Save face image and train/update model
         face_system.save_student_face(student_id, gray_face)
         return jsonify({
             'success': True,
