@@ -201,6 +201,96 @@ document.addEventListener('DOMContentLoaded', () => {
         return canvasElement.toDataURL('image/jpeg', 0.85);
     }
 
+    // Function to draw dynamic circular face overlays
+    function drawFaceOverlay(overlayCanvas, overlayDiv, faces, frameWidth, frameHeight) {
+        if (!overlayCanvas) return;
+        const ctx = overlayCanvas.getContext('2d');
+        const container = overlayCanvas.parentElement;
+        const displayWidth = container.clientWidth || 640;
+        const displayHeight = container.clientHeight || 360;
+
+        overlayCanvas.width = displayWidth;
+        overlayCanvas.height = displayHeight;
+        ctx.clearRect(0, 0, displayWidth, displayHeight);
+
+        if (!faces || faces.length === 0) {
+            if (overlayDiv) overlayDiv.classList.remove('face-detected');
+            return;
+        }
+
+        if (overlayDiv) overlayDiv.classList.add('face-detected');
+
+        const scaleX = displayWidth / (frameWidth || 640);
+        const scaleY = displayHeight / (frameHeight || 480);
+
+        faces.forEach(face => {
+            const cx = face.cx * scaleX;
+            const cy = face.cy * scaleY;
+            const radius = Math.max(face.w * scaleX, face.h * scaleY) * 0.65;
+
+            // Draw glowing circular face boundary
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, 0, 2 * Math.PI, false);
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#28a745';
+            ctx.shadowColor = '#28a745';
+            ctx.shadowBlur = 12;
+            ctx.stroke();
+
+            // Draw inner crosshair / center target indicator
+            ctx.shadowBlur = 0;
+            ctx.beginPath();
+            ctx.arc(cx, cy, 4, 0, 2 * Math.PI, false);
+            ctx.fillStyle = '#28a745';
+            ctx.fill();
+        });
+    }
+
+    // Periodic face detection indicator loop
+    let detectionInterval = null;
+    function startAutoFaceDetection() {
+        if (detectionInterval) clearInterval(detectionInterval);
+        detectionInterval = setInterval(async () => {
+            const activeTab = document.querySelector('.nav-link.active')?.getAttribute('id');
+            let videoEl, canvasEl, overlayCanvasEl, overlayDivEl;
+
+            if (activeTab === 'attendance-tab') {
+                videoEl = attVideo;
+                canvasEl = attCanvas;
+                overlayCanvasEl = document.getElementById('att-overlay-canvas');
+                overlayDivEl = document.getElementById('att-face-overlay');
+            } else if (activeTab === 'register-tab') {
+                videoEl = regVideo;
+                canvasEl = regCanvas;
+                overlayCanvasEl = document.getElementById('reg-overlay-canvas');
+                overlayDivEl = document.getElementById('reg-face-overlay');
+            } else {
+                return;
+            }
+
+            try {
+                const imgB64 = await getCaptureFrame(videoEl, canvasEl);
+                if (!imgB64) return;
+
+                const response = await fetch('/api/detect_face', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image: imgB64 })
+                });
+                const data = await response.json();
+                if (data.success && data.detected && data.faces) {
+                    drawFaceOverlay(overlayCanvasEl, overlayDivEl, data.faces, canvasEl.width || 640, canvasEl.height || 480);
+                } else {
+                    drawFaceOverlay(overlayCanvasEl, overlayDivEl, [], 640, 480);
+                }
+            } catch (err) {
+                // Ignore background interval detection error
+            }
+        }, 1500);
+    }
+
+    startAutoFaceDetection();
+
     // Handle Mark Attendance
     btnMarkAttendance.addEventListener('click', async () => {
         btnMarkAttendance.disabled = true;

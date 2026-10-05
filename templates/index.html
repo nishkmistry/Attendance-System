@@ -79,13 +79,14 @@
                             <span id="att-stream-label" class="badge bg-primary">Drone Feed</span>
                         </div>
                         <div class="card-body text-center">
-                            <div class="webcam-container mb-3 position-relative rounded overflow-hidden bg-dark style="min-height: 360px;">
+                            <div class="webcam-container mb-3 position-relative rounded overflow-hidden bg-dark" style="min-height: 360px;">
                                 <!-- Drone MJPEG Feed -->
                                 <img id="att-drone-img" src="/video_feed" class="w-100 h-100 object-fit-cover" alt="Drone Stream">
                                 <!-- Local Webcam Feed -->
                                 <video id="att-video" autoplay playsinline class="w-100 h-100 object-fit-cover d-none"></video>
                                 <canvas id="att-canvas" class="d-none"></canvas>
-                                <div class="face-overlay"></div>
+                                <canvas id="att-overlay-canvas" class="face-overlay-canvas"></canvas>
+                                <div id="att-face-overlay" class="face-overlay"></div>
                             </div>
                             <div class="d-grid gap-2">
                                 <button id="btn-mark-attendance" class="btn btn-primary btn-lg fw-bold">
@@ -139,7 +140,8 @@
                                 <!-- Local Webcam Feed -->
                                 <video id="reg-video" autoplay playsinline class="w-100 h-100 object-fit-cover d-none"></video>
                                 <canvas id="reg-canvas" class="d-none"></canvas>
-                                <div class="face-overlay"></div>
+                                <canvas id="reg-overlay-canvas" class="face-overlay-canvas"></canvas>
+                                <div id="reg-face-overlay" class="face-overlay"></div>
                             </div>
                             <p class="text-muted small mb-0"><i class="bi bi-info-circle me-1"></i>Ensure the student's face is clearly visible and well-lit.</p>
                         </div>

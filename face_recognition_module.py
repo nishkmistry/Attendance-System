@@ -58,6 +58,16 @@ def base64_to_image(b64_string):
         print(f"Error decoding base64 image: {e}")
         return None
 
+def image_to_base64(image):
+    """Converts an OpenCV BGR image to base64 Data URL string."""
+    if image is None:
+        return None
+    ret, buffer = cv2.imencode('.jpg', image)
+    if not ret:
+        return None
+    b64_str = base64.b64encode(buffer).decode('utf-8')
+    return f"data:image/jpeg;base64,{b64_str}"
+
 def detect_faces(image):
     """
     Detects faces in a BGR image using OpenCV Haar Cascade.
@@ -73,6 +83,46 @@ def detect_faces(image):
         minSize=(30, 30)
     )
     return faces, gray
+
+def crop_circular_face(image, face_box=None, size=200, padding=0.25, circular=True):
+    """
+    Automatically detects and crops a face from an image within a circular boundary.
+    Returns (cropped_face_bgr, face_box).
+    """
+    if image is None:
+        return None, None
+
+    if face_box is None:
+        faces, _ = detect_faces(image)
+        if len(faces) == 0:
+            return None, None
+        face_box = max(faces, key=lambda rect: rect[2] * rect[3])
+
+    x, y, w, h = [int(v) for v in face_box]
+    img_h, img_w = image.shape[:2]
+
+    # Calculate bounding square with padding
+    pad_w = int(w * padding)
+    pad_h = int(h * padding)
+
+    x1 = max(0, x - pad_w)
+    y1 = max(0, y - pad_h)
+    x2 = min(img_w, x + w + pad_w)
+    y2 = min(img_h, y + h + pad_h)
+
+    face_crop = image[y1:y2, x1:x2]
+    if face_crop.size == 0:
+        return None, (x, y, w, h)
+
+    resized_face = cv2.resize(face_crop, (size, size))
+
+    if circular:
+        mask = np.zeros((size, size), dtype=np.uint8)
+        cv2.circle(mask, (size // 2, size // 2), size // 2, 255, -1)
+        circular_face = cv2.bitwise_and(resized_face, resized_face, mask=mask)
+        return circular_face, (x, y, w, h)
+
+    return resized_face, (x, y, w, h)
 
 class FaceRecognitionSystem:
     def __init__(self, dataset_dir='dataset', model_name='VGG-Face', distance_threshold=0.40):

@@ -68,6 +68,40 @@ class FacialAttendanceTestCase(unittest.TestCase):
         logs = database.get_attendance_logs(db_path=self.test_db)
         self.assertEqual(len(logs), 1)
 
+    def test_crop_circular_face(self):
+        from face_recognition_module import crop_circular_face
+        # Create test image with face-like region
+        img = np.ones((200, 200, 3), dtype=np.uint8) * 150
+
+        # Test crop with specific face box
+        cropped, box = crop_circular_face(img, face_box=(20, 20, 60, 60), size=100, circular=True)
+        self.assertIsNotNone(cropped)
+        self.assertEqual(cropped.shape, (100, 100, 3))
+        self.assertEqual(box, (20, 20, 60, 60))
+
+    @patch('app.detect_faces')
+    def test_detect_face_endpoint(self, mock_app_detect):
+        sample_img_b64 = self._create_sample_image_b64()
+        dummy_gray = np.ones((100, 100), dtype=np.uint8) * 100
+
+        # Test case 1: Face detected
+        mock_app_detect.return_value = ([(10, 10, 50, 50)], dummy_gray)
+        res = self.client.post('/api/detect_face', json={'image': sample_img_b64})
+        self.assertEqual(res.status_code, 200)
+        data = json.loads(res.data)
+        self.assertTrue(data['success'])
+        self.assertTrue(data['detected'])
+        self.assertEqual(len(data['faces']), 1)
+        self.assertIn('cropped_face', data)
+
+        # Test case 2: No face detected
+        mock_app_detect.return_value = ([], dummy_gray)
+        res2 = self.client.post('/api/detect_face', json={'image': sample_img_b64})
+        self.assertEqual(res2.status_code, 200)
+        data2 = json.loads(res2.data)
+        self.assertTrue(data2['success'])
+        self.assertFalse(data2['detected'])
+
     @patch('app.detect_faces')
     def test_register_student_no_face(self, mock_detect_faces):
         mock_detect_faces.return_value = ([], None)

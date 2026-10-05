@@ -5,7 +5,10 @@ import time
 import base64
 import numpy as np
 import database
-from face_recognition_module import FaceRecognitionSystem, base64_to_image, detect_faces
+from face_recognition_module import (
+    FaceRecognitionSystem, base64_to_image, image_to_base64,
+    detect_faces, crop_circular_face
+)
 
 app = Flask(__name__)
 
@@ -100,6 +103,57 @@ def drone_snapshot():
     image_data_url = f"data:image/jpeg;base64,{b64_str}"
     return jsonify({'success': True, 'image': image_data_url})
 
+@app.route('/api/detect_face', methods=['POST'])
+def detect_face_endpoint():
+    """
+    Expects JSON: { "image": "data:image/jpeg;base64,..." }
+    Detects faces automatically and returns list of face bounding boxes and cropped circular face base64.
+    """
+    data = request.get_json() or {}
+    image_b64 = data.get('image', '')
+    if not image_b64:
+        return jsonify({'success': False, 'message': 'Image is required.'}), 400
+
+    img = base64_to_image(image_b64)
+    if img is None:
+        return jsonify({'success': False, 'message': 'Invalid image format.'}), 400
+
+    faces, _ = detect_faces(img)
+    if len(faces) == 0:
+        return jsonify({'success': True, 'detected': False, 'faces': [], 'message': 'No face detected'}), 200
+
+    formatted_faces = []
+    circular_face_b64 = None
+
+    largest_face = max(faces, key=lambda rect: rect[2] * rect[3])
+    crop, face_box = crop_circular_face(img, face_box=largest_face, size=200, circular=True)
+    if crop is not None:
+        circular_face_b64 = image_to_base64(crop)
+
+    for (x, y, w, h) in faces:
+        formatted_faces.append({
+            'x': int(x),
+            'y': int(y),
+            'w': int(w),
+            'h': int(h),
+            'cx': int(x + w / 2),
+            'cy': int(y + h / 2),
+            'r': int(max(w, h) / 2)
+        })
+
+    return jsonify({
+        'success': True,
+        'detected': True,
+        'faces': formatted_faces,
+        'primary_face': {
+            'x': int(largest_face[0]),
+            'y': int(largest_face[1]),
+            'w': int(largest_face[2]),
+            'h': int(largest_face[3])
+        },
+        'cropped_face': circular_face_b64
+    })
+
 @app.route('/api/register', methods=['POST'])
 def register_student():
     """
@@ -132,19 +186,30 @@ def register_student():
     if len(faces) == 0:
         return jsonify({'success': False, 'message': 'No face detected in the captured image. Please align face clearly.'}), 400
 
-    # Get largest detected face
+    # Get largest detected face and crop automatically inside circular boundary
     largest_face = max(faces, key=lambda rect: rect[2] * rect[3])
     x, y, w, h = largest_face
-    gray_face = gray[y:y+h, x:x+w]
+
+    # Save circular cropped face
+    circular_face, _ = crop_circular_face(img, face_box=largest_face, size=200, circular=True)
+    if circular_face is None:
+        gray_face = gray[y:y+h, x:x+w]
+        face_to_save = gray_face
+    else:
+        face_to_save = circular_face
 
     try:
         student_id = database.add_student(reg_no, name)
         # Save face image and train/update model
-        face_system.save_student_face(student_id, gray_face)
+        face_system.save_student_face(student_id, face_to_save)
+
+        cropped_preview_b64 = image_to_base64(circular_face) if circular_face is not None else None
         return jsonify({
             'success': True,
             'message': f'Student "{name}" ({reg_no}) registered successfully.',
-            'student': {'id': student_id, 'name': name, 'reg_no': reg_no}
+            'student': {'id': student_id, 'name': name, 'reg_no': reg_no},
+            'face_box': {'x': int(x), 'y': int(y), 'w': int(w), 'h': int(h)},
+            'cropped_face': cropped_preview_b64
         })
     except Exception as e:
         return jsonify({'success': False, 'message': f'Error registering student: {str(e)}'}), 500
