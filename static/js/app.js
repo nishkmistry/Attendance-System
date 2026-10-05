@@ -1,8 +1,12 @@
 document.addEventListener('DOMContentLoaded', () => {
     let currentStream = null;
+    let activeCameraSource = 'drone'; // 'drone' or 'webcam'
 
     const attVideo = document.getElementById('att-video');
+    const attDroneImg = document.getElementById('att-drone-img');
     const attCanvas = document.getElementById('att-canvas');
+    const attStreamLabel = document.getElementById('att-stream-label');
+
     const btnMarkAttendance = document.getElementById('btn-mark-attendance');
     const attIdleState = document.getElementById('att-idle-state');
     const attResultState = document.getElementById('att-result-state');
@@ -13,7 +17,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const attTime = document.getElementById('att-time');
 
     const regVideo = document.getElementById('reg-video');
+    const regDroneImg = document.getElementById('reg-drone-img');
     const regCanvas = document.getElementById('reg-canvas');
+    const regStreamLabel = document.getElementById('reg-stream-label');
+
     const regForm = document.getElementById('reg-form');
     const regName = document.getElementById('reg-name');
     const regId = document.getElementById('reg-id');
@@ -25,8 +32,57 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnRefreshStudents = document.getElementById('btn-refresh-students');
     const btnRefreshLogs = document.getElementById('btn-refresh-logs');
 
-    // Initialize camera stream
-    async function startCamera(videoElement) {
+    const cameraSourceRadios = document.querySelectorAll('input[name="cameraSource"]');
+    const droneStatusBadge = document.getElementById('drone-status-badge');
+    const droneConfigForm = document.getElementById('drone-config-form');
+    const droneUrlInput = document.getElementById('drone-url-input');
+    const droneConfigAlert = document.getElementById('drone-config-alert');
+
+    // Fetch current drone stream config
+    async function loadDroneConfig() {
+        try {
+            const res = await fetch('/api/drone/config');
+            const data = await res.json();
+            if (data.success && data.stream_url) {
+                droneUrlInput.value = data.stream_url;
+            }
+        } catch (err) {
+            console.error("Error loading drone config:", err);
+        }
+    }
+    loadDroneConfig();
+
+    // Drone config form submit
+    droneConfigForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const newUrl = droneUrlInput.value.trim();
+        try {
+            const res = await fetch('/api/drone/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ stream_url: newUrl })
+            });
+            const data = await res.json();
+            droneConfigAlert.classList.remove('d-none');
+            if (data.success) {
+                droneConfigAlert.className = 'alert alert-success';
+                droneConfigAlert.textContent = data.message;
+                // Refresh drone img src
+                attDroneImg.src = '/video_feed?t=' + new Date().getTime();
+                regDroneImg.src = '/video_feed?t=' + new Date().getTime();
+            } else {
+                droneConfigAlert.className = 'alert alert-danger';
+                droneConfigAlert.textContent = data.message;
+            }
+        } catch (err) {
+            droneConfigAlert.classList.remove('d-none');
+            droneConfigAlert.className = 'alert alert-danger';
+            droneConfigAlert.textContent = 'Failed to update drone stream configuration.';
+        }
+    });
+
+    // Initialize local webcam stream
+    async function startWebcam(videoElement) {
         if (currentStream) {
             currentStream.getTracks().forEach(track => track.stop());
         }
@@ -38,7 +94,62 @@ document.addEventListener('DOMContentLoaded', () => {
             currentStream = stream;
             videoElement.srcObject = stream;
         } catch (err) {
-            console.error("Camera access error:", err);
+            console.error("Webcam access error:", err);
+        }
+    }
+
+    function stopWebcam() {
+        if (currentStream) {
+            currentStream.getTracks().forEach(track => track.stop());
+            currentStream = null;
+        }
+    }
+
+    // Camera Source switch handler
+    cameraSourceRadios.forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            activeCameraSource = e.target.value;
+            updateCameraViews();
+        });
+    });
+
+    function updateCameraViews() {
+        const activeTab = document.querySelector('.nav-link.active').getAttribute('id');
+
+        if (activeCameraSource === 'drone') {
+            droneStatusBadge.className = 'badge bg-success px-3 py-2 fs-6';
+            droneStatusBadge.innerHTML = '<i class="bi bi-broadcast me-1"></i>Drone Stream Source Active';
+
+            attDroneImg.classList.remove('d-none');
+            attVideo.classList.add('d-none');
+            attStreamLabel.className = 'badge bg-primary';
+            attStreamLabel.textContent = 'Drone Feed';
+
+            regDroneImg.classList.remove('d-none');
+            regVideo.classList.add('d-none');
+            regStreamLabel.className = 'badge bg-success';
+            regStreamLabel.textContent = 'Drone Feed';
+
+            stopWebcam();
+        } else {
+            droneStatusBadge.className = 'badge bg-secondary px-3 py-2 fs-6';
+            droneStatusBadge.innerHTML = '<i class="bi bi-webcam me-1"></i>Local Webcam Active';
+
+            attDroneImg.classList.add('d-none');
+            attVideo.classList.remove('d-none');
+            attStreamLabel.className = 'badge bg-secondary';
+            attStreamLabel.textContent = 'Local Webcam';
+
+            regDroneImg.classList.add('d-none');
+            regVideo.classList.remove('d-none');
+            regStreamLabel.className = 'badge bg-secondary';
+            regStreamLabel.textContent = 'Local Webcam';
+
+            if (activeTab === 'attendance-tab') {
+                startWebcam(attVideo);
+            } else if (activeTab === 'register-tab') {
+                startWebcam(regVideo);
+            }
         }
     }
 
@@ -47,25 +158,40 @@ document.addEventListener('DOMContentLoaded', () => {
     tabEls.forEach(tabEl => {
         tabEl.addEventListener('shown.bs.tab', (event) => {
             const targetId = event.target.getAttribute('data-bs-target');
-            if (targetId === '#attendance-pane') {
-                startCamera(attVideo);
-            } else if (targetId === '#register-pane') {
-                startCamera(regVideo);
-            } else if (targetId === '#records-pane') {
-                if (currentStream) {
-                    currentStream.getTracks().forEach(track => track.stop());
+            if (activeCameraSource === 'webcam') {
+                if (targetId === '#attendance-pane') {
+                    startWebcam(attVideo);
+                } else if (targetId === '#register-pane') {
+                    startWebcam(regVideo);
+                } else if (targetId === '#records-pane') {
+                    stopWebcam();
+                    loadStudents();
+                    loadAttendanceLogs();
                 }
-                loadStudents();
-                loadAttendanceLogs();
+            } else {
+                if (targetId === '#records-pane') {
+                    loadStudents();
+                    loadAttendanceLogs();
+                }
             }
         });
     });
 
-    // Start default tab camera (Attendance tab)
-    startCamera(attVideo);
+    // Capture frame base64 from video element or drone API
+    async function getCaptureFrame(videoElement, canvasElement) {
+        if (activeCameraSource === 'drone') {
+            try {
+                const res = await fetch('/api/drone/snapshot');
+                const data = await res.json();
+                if (data.success && data.image) {
+                    return data.image;
+                }
+            } catch (e) {
+                console.error("Drone snapshot error:", e);
+            }
+        }
 
-    // Capture frame base64 from video element
-    function captureFrame(videoElement, canvasElement) {
+        // Fallback or webcam capture
         const width = videoElement.videoWidth || 640;
         const height = videoElement.videoHeight || 480;
         canvasElement.width = width;
@@ -80,7 +206,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btnMarkAttendance.disabled = true;
         btnMarkAttendance.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Scanning...';
 
-        const imageB64 = captureFrame(attVideo, attCanvas);
+        const imageB64 = await getCaptureFrame(attVideo, attCanvas);
 
         try {
             const response = await fetch('/api/attendance', {
@@ -95,7 +221,6 @@ document.addEventListener('DOMContentLoaded', () => {
             attResultState.classList.remove('d-none');
 
             if (data.success && data.registered) {
-                // Registered student successfully recognized & marked
                 attStatusBadge.className = 'alert alert-success fw-bold text-start mb-3';
                 attStatusBadge.innerHTML = `<i class="bi bi-check-circle-fill me-2"></i>${data.message}`;
 
@@ -104,12 +229,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 attTime.textContent = data.attendance.timestamp;
                 attStudentInfo.classList.remove('d-none');
             } else if (!data.registered) {
-                // Student NOT registered or not recognized
                 attStatusBadge.className = 'alert alert-danger fw-bold text-start mb-3';
                 attStatusBadge.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-2"></i>Student is not registered.`;
                 attStudentInfo.classList.add('d-none');
             } else {
-                // Other error (e.g., no face detected)
                 attStatusBadge.className = 'alert alert-warning fw-bold text-start mb-3';
                 attStatusBadge.innerHTML = `<i class="bi bi-info-circle-fill me-2"></i>${data.message || 'Face scan error'}`;
                 attStudentInfo.classList.add('d-none');
@@ -143,7 +266,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btnRegister.disabled = true;
         btnRegister.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Registering...';
 
-        const imageB64 = captureFrame(regVideo, regCanvas);
+        const imageB64 = await getCaptureFrame(regVideo, regCanvas);
 
         try {
             const response = await fetch('/api/register', {
