@@ -219,7 +219,12 @@ class FaceRecognitionSystem:
                 'message': 'Student is not registered'
             }
 
-        target_embedding = self.extract_embedding(image)
+        # Crop target face inside circular boundary for consistent embeddings
+        largest_face = max(faces, key=lambda rect: rect[2] * rect[3])
+        cropped_target, _ = crop_circular_face(image, face_box=largest_face, size=200, circular=True)
+        eval_image = cropped_target if cropped_target is not None else image
+
+        target_embedding = self.extract_embedding(eval_image)
         if target_embedding is None:
             return {
                 'status': 'not_registered',

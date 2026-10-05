@@ -21,15 +21,26 @@ face_system = FaceRecognitionSystem()
 # Drone Camera Stream Configuration
 DRONE_STREAM_URL = os.environ.get("DRONE_STREAM_URL", "0")  # Default to device video index or RTSP/HTTP URL
 drone_cap = None
+last_cap_attempt_time = 0
+CAP_RETRY_INTERVAL = 2.0  # Cooldown in seconds before retrying offline VideoCapture
 
 def get_drone_cap():
-    global drone_cap, DRONE_STREAM_URL
+    global drone_cap, DRONE_STREAM_URL, last_cap_attempt_time
     if drone_cap is not None and drone_cap.isOpened():
         return drone_cap
+
+    now = time.time()
+    if now - last_cap_attempt_time < CAP_RETRY_INTERVAL:
+        return None
+
+    last_cap_attempt_time = now
     source = DRONE_STREAM_URL
-    if source.isdigit():
+    if isinstance(source, str) and source.isdigit():
         source = int(source)
-    drone_cap = cv2.VideoCapture(source)
+    try:
+        drone_cap = cv2.VideoCapture(source)
+    except Exception as e:
+        drone_cap = None
     return drone_cap
 
 def generate_drone_frames():
@@ -88,12 +99,17 @@ def drone_config():
 def drone_snapshot():
     """Captures single snapshot from current drone stream and returns base64 image string."""
     cap = get_drone_cap()
-    if cap is None or not cap.isOpened():
-        return jsonify({'success': False, 'message': 'Drone camera stream unavailable'}), 503
+    frame = None
+    if cap is not None and cap.isOpened():
+        success, cap_frame = cap.read()
+        if success and cap_frame is not None:
+            frame = cap_frame
 
-    success, frame = cap.read()
-    if not success or frame is None:
-        return jsonify({'success': False, 'message': 'Failed to capture frame from drone stream'}), 500
+    if frame is None:
+        # Create a placeholder black frame when stream source is unavailable
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.putText(frame, "Drone Camera Offline / Placeholder Feed", (60, 240),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
     ret, buffer = cv2.imencode('.jpg', frame)
     if not ret:
@@ -101,7 +117,7 @@ def drone_snapshot():
 
     b64_str = base64.b64encode(buffer).decode('utf-8')
     image_data_url = f"data:image/jpeg;base64,{b64_str}"
-    return jsonify({'success': True, 'image': image_data_url})
+    return jsonify({'success': True, 'image': image_data_url, 'offline': cap is None or not cap.isOpened()})
 
 @app.route('/api/detect_face', methods=['POST'])
 def detect_face_endpoint():
