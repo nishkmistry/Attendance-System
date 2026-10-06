@@ -5,3 +5,5 @@ attendance.db
 trainer.yml
 dataset/
 /home/jules/verification/
+venv/
+.claude/

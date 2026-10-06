@@ -7,7 +7,7 @@ import numpy as np
 import database
 from face_recognition_module import (
     FaceRecognitionSystem, base64_to_image, image_to_base64,
-    detect_faces, crop_circular_face
+    detect_faces_dnn, crop_circular_face
 )
 
 app = Flask(__name__)
@@ -118,19 +118,21 @@ def detect_face_endpoint():
     if img is None:
         return jsonify({'success': False, 'message': 'Invalid image format.'}), 400
 
-    faces, _ = detect_faces(img)
-    if len(faces) == 0:
+    detections = detect_faces_dnn(img)
+    if len(detections) == 0:
         return jsonify({'success': True, 'detected': False, 'faces': [], 'message': 'No face detected'}), 200
 
     formatted_faces = []
     circular_face_b64 = None
 
-    largest_face = max(faces, key=lambda rect: rect[2] * rect[3])
-    crop, face_box = crop_circular_face(img, face_box=largest_face, size=200, circular=True)
+    largest = max(detections, key=lambda d: d['box'][2] * d['box'][3])
+    lx, ly, lw, lh = largest['box']
+    crop, face_box = crop_circular_face(img, face_box=largest['box'], size=200, circular=True)
     if crop is not None:
         circular_face_b64 = image_to_base64(crop)
 
-    for (x, y, w, h) in faces:
+    for det in detections:
+        x, y, w, h = det['box']
         formatted_faces.append({
             'x': int(x),
             'y': int(y),
@@ -146,10 +148,10 @@ def detect_face_endpoint():
         'detected': True,
         'faces': formatted_faces,
         'primary_face': {
-            'x': int(largest_face[0]),
-            'y': int(largest_face[1]),
-            'w': int(largest_face[2]),
-            'h': int(largest_face[3])
+            'x': int(lx),
+            'y': int(ly),
+            'w': int(lw),
+            'h': int(lh)
         },
         'cropped_face': circular_face_b64
     })
@@ -178,30 +180,32 @@ def register_student():
     if not image_b64:
         return jsonify({'success': False, 'message': 'Image is required for face registration.'}), 400
 
+    existing = database.get_student_by_reg_no(reg_no)
+    if existing:
+        return jsonify({
+            'success': False,
+            'message': f'Registration Number "{reg_no}" is already registered to {existing["name"]}.'
+        }), 409
+
     img = base64_to_image(image_b64)
     if img is None:
         return jsonify({'success': False, 'message': 'Invalid image format.'}), 400
 
-    faces, gray = detect_faces(img)
-    if len(faces) == 0:
+    detections = detect_faces_dnn(img)
+    if len(detections) == 0:
         return jsonify({'success': False, 'message': 'No face detected in the captured image. Please align face clearly.'}), 400
 
-    # Get largest detected face and crop automatically inside circular boundary
-    largest_face = max(faces, key=lambda rect: rect[2] * rect[3])
-    x, y, w, h = largest_face
+    # Get largest detected face
+    largest = max(detections, key=lambda d: d['box'][2] * d['box'][3])
+    x, y, w, h = largest['box']
 
-    # Save circular cropped face
-    circular_face, _ = crop_circular_face(img, face_box=largest_face, size=200, circular=True)
-    if circular_face is None:
-        gray_face = gray[y:y+h, x:x+w]
-        face_to_save = gray_face
-    else:
-        face_to_save = circular_face
+    # Circular crop is for the UI preview only - never used for the recognition embedding
+    circular_face, _ = crop_circular_face(img, face_box=largest['box'], size=200, circular=True)
 
     try:
         student_id = database.add_student(reg_no, name)
-        # Save face image and train/update model
-        face_system.save_student_face(student_id, face_to_save)
+        # Save the rectangular aligned face crop and cache its embedding
+        face_system.save_student_face(student_id, largest['face'])
 
         cropped_preview_b64 = image_to_base64(circular_face) if circular_face is not None else None
         return jsonify({
@@ -221,52 +225,70 @@ def mark_attendance():
     {
        "image": "data:image/jpeg;base64,..."
     }
-    Performs ONLY facial recognition to identify student and record attendance.
+    Detects EVERY face in the frame (e.g. a drone shot of a classroom) in one pass.
+    Registered faces are matched and marked present automatically; unmatched faces
+    are labeled Unknown1, Unknown2, ... in detection order (resets every scan).
     """
     data = request.get_json()
     if not data or 'image' not in data:
         return jsonify({'success': False, 'message': 'Image is required for attendance.'}), 400
 
     image_b64 = data.get('image')
-    result = face_system.recognize_face_from_image(image_b64)
+    img = base64_to_image(image_b64)
+    if img is None:
+        return jsonify({'success': False, 'message': 'Invalid image format.'}), 400
 
-    if result['status'] == 'no_face':
-        return jsonify({
-            'success': False,
-            'registered': False,
-            'message': 'No face detected. Please position your face clearly in front of the camera.'
-        }), 400
+    recognitions = face_system.recognize_faces_batch(img)
 
-    if result['status'] == 'not_registered' or result['student_id'] is None:
+    if len(recognitions) == 0:
         return jsonify({
-            'success': False,
-            'registered': False,
-            'message': 'Student is not registered.'
+            'success': True,
+            'faces': [],
+            'marked_count': 0,
+            'unknown_count': 0,
+            'message': 'No faces detected in the frame.'
         }), 200
 
-    student_id = result['student_id']
-    student = database.get_student_by_id(student_id)
+    faces_result = []
+    marked_count = 0
+    unknown_count = 0
 
-    if not student:
-        return jsonify({
-            'success': False,
-            'registered': False,
-            'message': 'Student is not registered.'
-        }), 200
+    for rec in recognitions:
+        x, y, w, h = rec['box']
+        box = {'x': int(x), 'y': int(y), 'w': int(w), 'h': int(h)}
 
-    attendance_record = database.mark_attendance(student_id)
+        student = database.get_student_by_id(rec['student_id']) if rec['student_id'] is not None else None
 
-    if attendance_record.get('already_marked'):
-        msg = f'Attendance already marked today for {student["name"]} ({student["reg_no"]}).'
-    else:
-        msg = f'Attendance marked successfully for {student["name"]} ({student["reg_no"]}).'
+        if student:
+            attendance_record = database.mark_attendance(student['id'])
+            already = attendance_record.get('already_marked', False)
+            if not already:
+                marked_count += 1
+            faces_result.append({
+                'box': box,
+                'status': 'already_marked' if already else 'marked',
+                'name': student['name'],
+                'reg_no': student['reg_no'],
+                'timestamp': attendance_record.get('timestamp'),
+                'distance': rec['distance']
+            })
+        else:
+            unknown_count += 1
+            faces_result.append({
+                'box': box,
+                'status': 'unknown',
+                'name': f'Unknown{unknown_count}',
+                'reg_no': None,
+                'timestamp': None,
+                'distance': rec['distance']
+            })
 
     return jsonify({
         'success': True,
-        'registered': True,
-        'student': student,
-        'attendance': attendance_record,
-        'message': msg
+        'faces': faces_result,
+        'marked_count': marked_count,
+        'unknown_count': unknown_count,
+        'message': f'{marked_count} student(s) marked present, {unknown_count} unknown face(s) detected.'
     }), 200
 
 @app.route('/api/students', methods=['GET'])
@@ -280,4 +302,10 @@ def get_attendance():
     return jsonify({'success': True, 'attendance': logs})
 
 if __name__ == '__main__':
+    # Force the detection/embedding models to load now rather than on the first request -
+    # cold start can take 20-40s on CPU, which otherwise makes the first registration or
+    # attendance scan look hung. debug=True below always spawns a reloader child process
+    # to actually serve, so only that child (not the watcher parent) needs to warm up.
+    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+        face_system.warmup()
     app.run(host='0.0.0.0', port=5000, debug=True)

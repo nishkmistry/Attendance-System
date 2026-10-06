@@ -79,13 +79,16 @@ class FacialAttendanceTestCase(unittest.TestCase):
         self.assertEqual(cropped.shape, (100, 100, 3))
         self.assertEqual(box, (20, 20, 60, 60))
 
-    @patch('app.detect_faces')
+    def _dummy_detection(self, box=(10, 10, 50, 50)):
+        dummy_face_crop = np.ones((100, 100, 3), dtype=np.uint8) * 120
+        return [{'box': box, 'face': dummy_face_crop, 'confidence': 0.99}]
+
+    @patch('app.detect_faces_dnn')
     def test_detect_face_endpoint(self, mock_app_detect):
         sample_img_b64 = self._create_sample_image_b64()
-        dummy_gray = np.ones((100, 100), dtype=np.uint8) * 100
 
         # Test case 1: Face detected
-        mock_app_detect.return_value = ([(10, 10, 50, 50)], dummy_gray)
+        mock_app_detect.return_value = self._dummy_detection()
         res = self.client.post('/api/detect_face', json={'image': sample_img_b64})
         self.assertEqual(res.status_code, 200)
         data = json.loads(res.data)
@@ -95,16 +98,16 @@ class FacialAttendanceTestCase(unittest.TestCase):
         self.assertIn('cropped_face', data)
 
         # Test case 2: No face detected
-        mock_app_detect.return_value = ([], dummy_gray)
+        mock_app_detect.return_value = []
         res2 = self.client.post('/api/detect_face', json={'image': sample_img_b64})
         self.assertEqual(res2.status_code, 200)
         data2 = json.loads(res2.data)
         self.assertTrue(data2['success'])
         self.assertFalse(data2['detected'])
 
-    @patch('app.detect_faces')
+    @patch('app.detect_faces_dnn')
     def test_register_student_no_face(self, mock_detect_faces):
-        mock_detect_faces.return_value = ([], None)
+        mock_detect_faces.return_value = []
         sample_img_b64 = self._create_sample_image_b64()
 
         response = self.client.post('/api/register', json={
@@ -117,15 +120,13 @@ class FacialAttendanceTestCase(unittest.TestCase):
         self.assertFalse(data['success'])
         self.assertIn('No face detected', data['message'])
 
-    @patch('face_recognition_module.FaceRecognitionSystem.extract_embedding')
-    @patch('face_recognition_module.detect_faces')
-    @patch('app.detect_faces')
+    @patch('face_recognition_module.extract_embedding_from_crop')
+    @patch('face_recognition_module.detect_faces_dnn')
+    @patch('app.detect_faces_dnn')
     def test_register_and_mark_attendance_flow(self, mock_app_detect, mock_mod_detect, mock_extract_embedding):
-        dummy_gray = np.ones((100, 100), dtype=np.uint8) * 100
-        mock_faces = ([(10, 10, 50, 50)], dummy_gray)
-
-        mock_app_detect.return_value = mock_faces
-        mock_mod_detect.return_value = mock_faces
+        mock_detection = self._dummy_detection()
+        mock_app_detect.return_value = mock_detection
+        mock_mod_detect.return_value = mock_detection
         # Return identical embeddings for exact match
         dummy_embedding = np.ones((128,), dtype=np.float32)
         mock_extract_embedding.return_value = dummy_embedding
@@ -142,22 +143,30 @@ class FacialAttendanceTestCase(unittest.TestCase):
         reg_data = json.loads(reg_response.data)
         self.assertTrue(reg_data['success'])
 
-        # 2. Mark attendance using the same facial image
+        # 2. Mark attendance using the same facial image (single face in frame)
         att_response = self.client.post('/api/attendance', json={
             'image': face_img_b64
         })
         self.assertEqual(att_response.status_code, 200)
         att_data = json.loads(att_response.data)
         self.assertTrue(att_data['success'])
-        self.assertTrue(att_data['registered'])
-        self.assertEqual(att_data['student']['name'], 'Charlie')
-        self.assertEqual(att_data['student']['reg_no'], 'REG003')
+        self.assertEqual(att_data['marked_count'], 1)
+        self.assertEqual(len(att_data['faces']), 1)
+        self.assertEqual(att_data['faces'][0]['status'], 'marked')
+        self.assertEqual(att_data['faces'][0]['name'], 'Charlie')
+        self.assertEqual(att_data['faces'][0]['reg_no'], 'REG003')
 
-    @patch('face_recognition_module.detect_faces')
-    def test_unregistered_student_attendance(self, mock_mod_detect):
-        dummy_gray = np.ones((100, 100), dtype=np.uint8) * 100
-        mock_faces = ([(10, 10, 50, 50)], dummy_gray)
-        mock_mod_detect.return_value = mock_faces
+        # 3. Mark attendance again same day -> already_marked
+        att_response2 = self.client.post('/api/attendance', json={'image': face_img_b64})
+        att_data2 = json.loads(att_response2.data)
+        self.assertEqual(att_data2['marked_count'], 0)
+        self.assertEqual(att_data2['faces'][0]['status'], 'already_marked')
+
+    @patch('face_recognition_module.extract_embedding_from_crop')
+    @patch('face_recognition_module.detect_faces_dnn')
+    def test_unregistered_student_attendance(self, mock_mod_detect, mock_extract_embedding):
+        mock_mod_detect.return_value = self._dummy_detection()
+        mock_extract_embedding.return_value = np.ones((128,), dtype=np.float32)
 
         sample_img_b64 = self._create_sample_image_b64()
         att_response = self.client.post('/api/attendance', json={
@@ -165,9 +174,49 @@ class FacialAttendanceTestCase(unittest.TestCase):
         })
         self.assertEqual(att_response.status_code, 200)
         att_data = json.loads(att_response.data)
-        self.assertFalse(att_data['success'])
-        self.assertFalse(att_data['registered'])
-        self.assertIn('Student is not registered', att_data['message'])
+        self.assertTrue(att_data['success'])
+        self.assertEqual(att_data['unknown_count'], 1)
+        self.assertEqual(att_data['faces'][0]['status'], 'unknown')
+        self.assertEqual(att_data['faces'][0]['name'], 'Unknown1')
+
+    @patch('face_recognition_module.extract_embedding_from_crop')
+    @patch('face_recognition_module.detect_faces_dnn')
+    @patch('app.detect_faces_dnn')
+    def test_multi_face_batch_attendance(self, mock_app_detect, mock_mod_detect, mock_extract_embedding):
+        """One frame with two faces: one registered (matches cached embedding), one unknown."""
+        known_embedding = np.ones((128,), dtype=np.float32)
+        unknown_embedding = np.array([1.0] + [-1.0] * 127, dtype=np.float32)  # far from known_embedding
+
+        # Register a known student using face box A
+        mock_app_detect.return_value = self._dummy_detection(box=(10, 10, 50, 50))
+        mock_mod_detect.return_value = self._dummy_detection(box=(10, 10, 50, 50))
+        mock_extract_embedding.return_value = known_embedding
+
+        face_img_b64 = self._create_sample_image_b64()
+        reg_response = self.client.post('/api/register', json={
+            'name': 'Dana',
+            'reg_no': 'REG004',
+            'image': face_img_b64
+        })
+        self.assertTrue(json.loads(reg_response.data)['success'])
+
+        # One frame containing both a known face and an unknown face
+        two_faces = [
+            {'box': (10, 10, 50, 50), 'face': np.ones((100, 100, 3), dtype=np.uint8) * 120, 'confidence': 0.99},
+            {'box': (70, 70, 50, 50), 'face': np.ones((100, 100, 3), dtype=np.uint8) * 60, 'confidence': 0.99},
+        ]
+        mock_mod_detect.return_value = two_faces
+        mock_extract_embedding.side_effect = [known_embedding, unknown_embedding]
+
+        att_response = self.client.post('/api/attendance', json={'image': face_img_b64})
+        att_data = json.loads(att_response.data)
+
+        self.assertTrue(att_data['success'])
+        self.assertEqual(att_data['marked_count'], 1)
+        self.assertEqual(att_data['unknown_count'], 1)
+        self.assertEqual(len(att_data['faces']), 2)
+        statuses = sorted(f['status'] for f in att_data['faces'])
+        self.assertEqual(statuses, ['marked', 'unknown'])
 
     def test_get_students_and_attendance_endpoints(self):
         # Fetch empty students list
