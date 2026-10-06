@@ -11,10 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const attIdleState = document.getElementById('att-idle-state');
     const attResultState = document.getElementById('att-result-state');
     const attStatusBadge = document.getElementById('att-status-badge');
-    const attStudentInfo = document.getElementById('att-student-info');
-    const attStudentName = document.getElementById('att-student-name');
-    const attStudentReg = document.getElementById('att-student-reg');
-    const attTime = document.getElementById('att-time');
+    const attFacesList = document.getElementById('att-faces-list');
 
     const regVideo = document.getElementById('reg-video');
     const regDroneImg = document.getElementById('reg-drone-img');
@@ -81,10 +78,41 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Shows/clears a visible error banner inside a video's webcam-container, since a
+    // getUserMedia failure previously only logged to the console with no on-screen sign.
+    function showWebcamError(videoElement, err) {
+        const container = videoElement.closest('.webcam-container');
+        if (!container) return;
+        let banner = container.querySelector('.webcam-error-banner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.className = 'webcam-error-banner position-absolute top-50 start-50 translate-middle text-center text-white bg-danger bg-opacity-75 p-3 rounded';
+            banner.style.zIndex = '10';
+            banner.style.maxWidth = '90%';
+            container.appendChild(banner);
+        }
+        let hint = '';
+        if (!window.isSecureContext) {
+            hint = ' Browsers block camera access on a plain http:// LAN address - open this page via https:// or as "localhost" on the server machine itself.';
+        }
+        const detail = (err && (err.message || err.name)) || 'Permission denied or no camera found.';
+        banner.innerHTML = `<i class="bi bi-camera-video-off me-1"></i><strong>Webcam unavailable:</strong> ${detail}${hint}`;
+    }
+
+    function clearWebcamError(videoElement) {
+        const container = videoElement.closest('.webcam-container');
+        const banner = container && container.querySelector('.webcam-error-banner');
+        if (banner) banner.remove();
+    }
+
     // Initialize local webcam stream
     async function startWebcam(videoElement) {
         if (currentStream) {
             currentStream.getTracks().forEach(track => track.stop());
+        }
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            showWebcamError(videoElement, { name: 'NotSupportedError', message: 'Camera API not available in this browser context.' });
+            return;
         }
         try {
             const stream = await navigator.mediaDevices.getUserMedia({
@@ -93,8 +121,10 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             currentStream = stream;
             videoElement.srcObject = stream;
+            clearWebcamError(videoElement);
         } catch (err) {
             console.error("Webcam access error:", err);
+            showWebcamError(videoElement, err);
         }
     }
 
@@ -291,7 +321,71 @@ document.addEventListener('DOMContentLoaded', () => {
 
     startAutoFaceDetection();
 
-    // Handle Mark Attendance
+    // Draw per-face result boxes (green = marked, amber = already marked, gray = unknown)
+    function drawAttendanceResultOverlay(faces, frameWidth, frameHeight) {
+        const overlayCanvas = document.getElementById('att-overlay-canvas');
+        if (!overlayCanvas) return;
+        const ctx = overlayCanvas.getContext('2d');
+        const container = overlayCanvas.parentElement;
+        const displayWidth = container.clientWidth || 640;
+        const displayHeight = container.clientHeight || 360;
+
+        overlayCanvas.width = displayWidth;
+        overlayCanvas.height = displayHeight;
+        ctx.clearRect(0, 0, displayWidth, displayHeight);
+
+        if (!faces || faces.length === 0) return;
+
+        const scaleX = displayWidth / (frameWidth || 640);
+        const scaleY = displayHeight / (frameHeight || 480);
+        const colors = { marked: '#28a745', already_marked: '#ffc107', unknown: '#6c757d' };
+
+        faces.forEach(f => {
+            const x = f.box.x * scaleX;
+            const y = f.box.y * scaleY;
+            const w = f.box.w * scaleX;
+            const h = f.box.h * scaleY;
+            const color = colors[f.status] || '#dc3545';
+
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 10;
+            ctx.strokeRect(x, y, w, h);
+
+            ctx.shadowBlur = 0;
+            ctx.font = 'bold 14px sans-serif';
+            const textWidth = ctx.measureText(f.name).width;
+            ctx.fillStyle = color;
+            ctx.fillRect(x, Math.max(0, y - 20), textWidth + 10, 20);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(f.name, x + 5, Math.max(14, y - 5));
+        });
+    }
+
+    function renderFaceResultRow(f) {
+        let badgeClass, icon, label;
+        if (f.status === 'marked') {
+            badgeClass = 'success'; icon = 'bi-check-circle-fill'; label = 'Marked Present';
+        } else if (f.status === 'already_marked') {
+            badgeClass = 'warning'; icon = 'bi-info-circle-fill'; label = 'Already Marked';
+        } else {
+            badgeClass = 'secondary'; icon = 'bi-question-circle-fill'; label = 'Unknown';
+        }
+        return `
+            <div class="card card-body bg-light py-2 px-3">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="fw-bold">${f.name}</div>
+                        ${f.reg_no ? `<small class="text-muted">Reg No: ${f.reg_no}</small>` : ''}
+                    </div>
+                    <span class="badge bg-${badgeClass}"><i class="bi ${icon} me-1"></i>${label}</span>
+                </div>
+            </div>
+        `;
+    }
+
+    // Handle Mark Attendance - scans and marks ALL faces visible in the frame at once
     btnMarkAttendance.addEventListener('click', async () => {
         btnMarkAttendance.disabled = true;
         btnMarkAttendance.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Scanning...';
@@ -310,29 +404,28 @@ document.addEventListener('DOMContentLoaded', () => {
             attIdleState.classList.add('d-none');
             attResultState.classList.remove('d-none');
 
-            if (data.success && data.registered) {
+            if (data.success && data.faces && data.faces.length > 0) {
                 attStatusBadge.className = 'alert alert-success fw-bold text-start mb-3';
                 attStatusBadge.innerHTML = `<i class="bi bi-check-circle-fill me-2"></i>${data.message}`;
-
-                attStudentName.textContent = data.student.name;
-                attStudentReg.textContent = data.student.reg_no;
-                attTime.textContent = data.attendance.timestamp;
-                attStudentInfo.classList.remove('d-none');
-            } else if (!data.registered) {
-                attStatusBadge.className = 'alert alert-danger fw-bold text-start mb-3';
-                attStatusBadge.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-2"></i>Student is not registered.`;
-                attStudentInfo.classList.add('d-none');
-            } else {
+                attFacesList.innerHTML = data.faces.map(renderFaceResultRow).join('');
+                drawAttendanceResultOverlay(data.faces, attCanvas.width || 640, attCanvas.height || 480);
+            } else if (data.success) {
                 attStatusBadge.className = 'alert alert-warning fw-bold text-start mb-3';
-                attStatusBadge.innerHTML = `<i class="bi bi-info-circle-fill me-2"></i>${data.message || 'Face scan error'}`;
-                attStudentInfo.classList.add('d-none');
+                attStatusBadge.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-2"></i>${data.message || 'No faces detected.'}`;
+                attFacesList.innerHTML = '';
+                drawAttendanceResultOverlay([], 640, 480);
+            } else {
+                attStatusBadge.className = 'alert alert-danger fw-bold text-start mb-3';
+                attStatusBadge.innerHTML = `<i class="bi bi-x-circle-fill me-2"></i>${data.message || 'Face scan error'}`;
+                attFacesList.innerHTML = '';
+                drawAttendanceResultOverlay([], 640, 480);
             }
         } catch (err) {
             attIdleState.classList.add('d-none');
             attResultState.classList.remove('d-none');
             attStatusBadge.className = 'alert alert-danger fw-bold text-start mb-3';
             attStatusBadge.innerHTML = `<i class="bi bi-x-circle-fill me-2"></i>Error processing attendance. Please try again.`;
-            attStudentInfo.classList.add('d-none');
+            attFacesList.innerHTML = '';
         } finally {
             btnMarkAttendance.disabled = false;
             btnMarkAttendance.innerHTML = '<i class="bi bi-person-check me-2"></i>Scan Face & Mark Attendance';
