@@ -1,261 +1,459 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-bs-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Facial Attendance System (Drone & DeepFace Integrated)</title>
+    <title>Mark Attendance · Facial Attendance System</title>
+    <script>
+        // Apply the saved (or system) colour theme before first paint to avoid a light flash.
+        (function () {
+            var theme = null;
+            try { theme = localStorage.getItem('fas-theme'); } catch (e) {}
+            if (theme !== 'light' && theme !== 'dark') {
+                theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            }
+            document.documentElement.setAttribute('data-bs-theme', theme);
+        })();
+    </script>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236366f1'/%3E%3Cstop offset='1' stop-color='%2306b6d4'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='16' fill='url(%23g)'/%3E%3Cpath d='M17 26v-5a4 4 0 0 1 4-4h5M38 17h5a4 4 0 0 1 4 4v5M47 38v5a4 4 0 0 1-4 4h-5M26 47h-5a4 4 0 0 1-4-4v-5' stroke='white' stroke-width='4' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='32' cy='28' r='6' fill='white'/%3E%3Cpath d='M22 42c2-5 6-7 10-7s8 2 10 7z' fill='white'/%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
-<body class="bg-light">
+<body>
 
-<nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
-    <div class="container">
-        <a class="navbar-brand fw-bold" href="#">
-            <i class="bi bi-person-bounding-box me-2"></i>Facial Attendance System
-        </a>
-        <div class="d-flex align-items-center text-white">
-            <span class="badge bg-info text-dark me-2"><i class="bi bi-cpu-fill me-1"></i>DeepFace AI</span>
-            <button class="btn btn-sm btn-outline-light" data-bs-toggle="modal" data-bs-target="#droneConfigModal">
-                <i class="bi bi-sliders me-1"></i>Drone Stream Settings
+<div class="app-shell">
+
+    <!-- ============ SIDEBAR ============ -->
+    <aside class="app-sidebar">
+        <div class="brand">
+            <div class="brand-mark"><i class="bi bi-person-bounding-box"></i></div>
+            <div class="brand-text">
+                <div class="brand-title">Facial Attendance</div>
+                <div class="brand-sub">DeepFace · Drone Vision</div>
+            </div>
+        </div>
+
+        <div class="nav-section-label">Workspace</div>
+        <nav class="nav sidebar-nav" id="appTabs" role="tablist" aria-label="Sections">
+            <button class="nav-link active" id="attendance-tab" data-bs-toggle="pill" data-bs-target="#attendance-pane" type="button" role="tab" aria-controls="attendance-pane" aria-selected="true">
+                <i class="bi bi-camera-video"></i><span>Mark Attendance</span>
+            </button>
+            <button class="nav-link" id="register-tab" data-bs-toggle="pill" data-bs-target="#register-pane" type="button" role="tab" aria-controls="register-pane" aria-selected="false">
+                <i class="bi bi-person-plus"></i><span>Register Student</span>
+            </button>
+            <button class="nav-link" id="records-tab" data-bs-toggle="pill" data-bs-target="#records-pane" type="button" role="tab" aria-controls="records-pane" aria-selected="false">
+                <i class="bi bi-journal-check"></i><span>Records</span>
+                <span class="nav-count" id="nav-student-count">0</span>
+            </button>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="sidebar-card">
+                <div class="sidebar-card-label">Today</div>
+                <div class="sidebar-today">
+                    <span class="sidebar-today-value"><span id="sb-present">0</span><small>/<span id="sb-total">0</span></small></span>
+                    <span class="sidebar-today-caption">present</span>
+                </div>
+                <div class="meter meter-dark"><span id="sb-meter"></span></div>
+            </div>
+
+            <div class="sidebar-card">
+                <div class="status-row">
+                    <span class="status-dot is-ok"></span>
+                    <span>Recognition</span>
+                    <span class="status-value">{{ model_name }}</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-dot is-live" id="sb-source-dot"></span>
+                    <span>Source</span>
+                    <span class="status-value" id="sb-source-label">Drone stream</span>
+                </div>
+            </div>
+
+            <button class="btn btn-sidebar" type="button" data-bs-toggle="modal" data-bs-target="#droneConfigModal">
+                <i class="bi bi-sliders"></i>Stream settings
             </button>
         </div>
-    </div>
-</nav>
+    </aside>
 
-<div class="container py-4">
-    <!-- Camera Source Toggle Toolbar -->
-    <div class="card shadow-sm mb-4 border-0">
-        <div class="card-body py-2 d-flex justify-content-between align-items-center flex-wrap gap-2 bg-white rounded">
-            <div class="d-flex align-items-center">
-                <span class="fw-bold me-3 text-secondary"><i class="bi bi-camera-reels me-1"></i>Active Camera Source:</span>
-                <div class="btn-group" role="group" id="cameraSourceGroup">
+    <!-- ============ MAIN ============ -->
+    <main class="app-main">
+        <header class="app-topbar">
+            <div class="topbar-heading">
+                <h1 class="page-title" id="page-title">Mark Attendance</h1>
+                <p class="page-subtitle" id="page-subtitle">Scan the live feed to recognise and check in every face in view.</p>
+            </div>
+            <div class="topbar-actions">
+                <div class="source-switch" role="radiogroup" aria-label="Camera source" id="cameraSourceGroup">
                     <input type="radio" class="btn-check" name="cameraSource" id="srcDrone" value="drone" checked>
-                    <label class="btn btn-outline-primary fw-semibold" for="srcDrone">
-                        <i class="bi bi-airplane-engines me-1"></i>Drone Camera Stream
-                    </label>
-
+                    <label for="srcDrone"><i class="bi bi-airplane-engines"></i><span>Drone</span></label>
                     <input type="radio" class="btn-check" name="cameraSource" id="srcWebcam" value="webcam">
-                    <label class="btn btn-outline-secondary fw-semibold" for="srcWebcam">
-                        <i class="bi bi-webcam me-1"></i>Local Webcam
-                    </label>
+                    <label for="srcWebcam"><i class="bi bi-webcam"></i><span>Webcam</span></label>
                 </div>
+                <div class="date-chip d-none d-md-inline-flex"><i class="bi bi-calendar3"></i><span id="topbar-date"></span></div>
+                <button class="icon-btn d-lg-none" type="button" data-bs-toggle="modal" data-bs-target="#droneConfigModal" aria-label="Stream settings" title="Stream settings">
+                    <i class="bi bi-sliders"></i>
+                </button>
+                <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch to dark theme" title="Toggle theme">
+                    <i class="bi bi-moon-stars"></i>
+                </button>
             </div>
-            <div id="drone-status-badge" class="badge bg-success px-3 py-2 fs-6">
-                <i class="bi bi-broadcast me-1"></i>Drone Stream Source Active
-            </div>
-        </div>
-    </div>
+        </header>
 
-    <!-- Navigation Tabs -->
-    <ul class="nav nav-pills nav-justified mb-4" id="appTabs" role="tablist">
-        <li class="nav-item" role="presentation">
-            <button class="nav-link active fw-bold" id="attendance-tab" data-bs-toggle="pill" data-bs-target="#attendance-pane" type="button" role="tab">
-                <i class="bi bi-camera me-2"></i>Mark Attendance
-            </button>
-        </li>
-        <li class="nav-item" role="presentation">
-            <button class="nav-link fw-bold" id="register-tab" data-bs-toggle="pill" data-bs-target="#register-pane" type="button" role="tab">
-                <i class="bi bi-person-plus me-2"></i>Student Registration
-            </button>
-        </li>
-        <li class="nav-item" role="presentation">
-            <button class="nav-link fw-bold" id="records-tab" data-bs-toggle="pill" data-bs-target="#records-pane" type="button" role="tab">
-                <i class="bi bi-journal-check me-2"></i>Attendance Logs & Students
-            </button>
-        </li>
-    </ul>
+        <div class="tab-content app-content" id="appTabsContent">
 
-    <div class="tab-content" id="appTabsContent">
-
-        <!-- MARK ATTENDANCE TAB -->
-        <div class="tab-pane fade show active" id="attendance-pane" role="tabpanel">
-            <div class="row">
-                <div class="col-lg-7 mb-4">
-                    <div class="card shadow-sm border-0">
-                        <div class="card-header bg-white fw-bold text-primary d-flex justify-content-between align-items-center">
-                            <span><i class="bi bi-camera-video me-2"></i>Facial Recognition Scanner</span>
-                            <span id="att-stream-label" class="badge bg-primary">Drone Feed</span>
-                        </div>
-                        <div class="card-body text-center">
-                            <div class="webcam-container mb-3 position-relative rounded overflow-hidden bg-dark" style="min-height: 360px;">
-                                <!-- Drone MJPEG Feed -->
-                                <img id="att-drone-img" src="/video_feed" class="w-100 h-100 object-fit-cover" alt="Drone Stream">
-                                <!-- Local Webcam Feed -->
-                                <video id="att-video" autoplay playsinline class="w-100 h-100 object-fit-cover d-none"></video>
-                                <canvas id="att-canvas" class="d-none"></canvas>
-                                <canvas id="att-overlay-canvas" class="face-overlay-canvas"></canvas>
-                                <div id="att-face-overlay" class="face-overlay"></div>
-                            </div>
-                            <div class="d-grid gap-2">
-                                <button id="btn-mark-attendance" class="btn btn-primary btn-lg fw-bold">
-                                    <i class="bi bi-person-check me-2"></i>Scan Face & Mark Attendance
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="col-lg-5">
-                    <div class="card shadow-sm border-0 h-100">
-                        <div class="card-header bg-white fw-bold text-secondary">
-                            <i class="bi bi-info-circle me-2"></i>Attendance Status
-                        </div>
-                        <div class="card-body d-flex flex-column justify-content-center align-items-center text-center" id="att-status-container">
-                            <div id="att-idle-state" class="py-5">
-                                <i class="bi bi-person-square text-muted" style="font-size: 4rem;"></i>
-                                <p class="text-muted mt-3">Position student's face in front of the camera and click "Scan Face & Mark Attendance".</p>
-                                <small class="text-secondary"><i class="bi bi-shield-lock me-1"></i>Powered by DeepFace facial embeddings.</small>
-                            </div>
-
-                            <div id="att-result-state" class="d-none w-100">
-                                <div id="att-status-badge" class="alert mb-3" role="alert"></div>
-                                <div id="att-faces-list" class="d-flex flex-column gap-2 text-start"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- STUDENT REGISTRATION TAB -->
-        <div class="tab-pane fade" id="register-pane" role="tabpanel">
-            <div class="row">
-                <div class="col-lg-7 mb-4">
-                    <div class="card shadow-sm border-0">
-                        <div class="card-header bg-white fw-bold text-success d-flex justify-content-between align-items-center">
-                            <span><i class="bi bi-camera-fill me-2"></i>Face Capture</span>
-                            <span id="reg-stream-label" class="badge bg-success">Drone Feed</span>
-                        </div>
-                        <div class="card-body text-center">
-                            <div class="webcam-container mb-3 position-relative rounded overflow-hidden bg-dark" style="min-height: 360px;">
-                                <!-- Drone MJPEG Feed -->
-                                <img id="reg-drone-img" src="/video_feed" class="w-100 h-100 object-fit-cover" alt="Drone Stream">
-                                <!-- Local Webcam Feed -->
-                                <video id="reg-video" autoplay playsinline class="w-100 h-100 object-fit-cover d-none"></video>
-                                <canvas id="reg-canvas" class="d-none"></canvas>
-                                <canvas id="reg-overlay-canvas" class="face-overlay-canvas"></canvas>
-                                <div id="reg-face-overlay" class="face-overlay"></div>
-                            </div>
-                            <p class="text-muted small mb-0"><i class="bi bi-info-circle me-1"></i>Ensure the student's face is clearly visible and well-lit.</p>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="col-lg-5">
-                    <div class="card shadow-sm border-0">
-                        <div class="card-header bg-white fw-bold text-success">
-                            <i class="bi bi-card-heading me-2"></i>Student Details
-                        </div>
-                        <div class="card-body">
-                            <form id="reg-form">
-                                <div class="mb-3">
-                                    <label for="reg-name" class="form-label fw-semibold">Full Name</label>
-                                    <input type="text" class="form-control" id="reg-name" placeholder="e.g. John Doe" required>
+            <!-- ============ MARK ATTENDANCE ============ -->
+            <div class="tab-pane fade show active" id="attendance-pane" role="tabpanel" aria-labelledby="attendance-tab">
+                <div class="row g-4">
+                    <div class="col-xl-8">
+                        <section class="panel">
+                            <div class="panel-header">
+                                <div class="panel-title">
+                                    <span class="panel-icon"><i class="bi bi-camera-video"></i></span>
+                                    <div>
+                                        <h2 class="panel-heading">Recognition scanner</h2>
+                                        <p class="panel-caption">Every face in frame is matched in a single pass</p>
+                                    </div>
                                 </div>
-                                <div class="mb-3">
-                                    <label for="reg-id" class="form-label fw-semibold">Registration Number</label>
-                                    <input type="text" class="form-control" id="reg-id" placeholder="e.g. REG-2025-001" required>
+                                <span id="att-stream-label" class="source-pill"><i class="bi bi-airplane-engines"></i>Drone feed</span>
+                            </div>
+                            <div class="panel-body">
+                                <div class="viewport" id="att-viewport">
+                                    <img id="att-drone-img" class="viewport-media" alt="Drone camera stream" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">
+                                    <video id="att-video" autoplay playsinline muted class="viewport-media d-none"></video>
+                                    <canvas id="att-canvas" class="d-none"></canvas>
+                                    <div id="att-face-overlay" class="face-overlay"></div>
+                                    <canvas id="att-overlay-canvas" class="face-overlay-canvas"></canvas>
+                                    <div class="scan-line"></div>
+                                    <div class="hud" aria-hidden="true">
+                                        <span class="hud-corner tl"></span><span class="hud-corner tr"></span>
+                                        <span class="hud-corner bl"></span><span class="hud-corner br"></span>
+                                        <div class="hud-chip hud-tl"><span class="live-dot"></span>Live · <span class="hud-source">Drone</span></div>
+                                        <div class="hud-chip hud-tr mono hud-clock">--:--:--</div>
+                                        <div class="hud-chip hud-bl detect-chip" id="att-detect-chip"><span class="detect-dot"></span><span class="detect-text">Searching for faces…</span></div>
+                                    </div>
                                 </div>
-                                <div id="reg-alert" class="alert d-none" role="alert"></div>
-                                <div class="d-grid">
-                                    <button type="submit" id="btn-register-student" class="btn btn-success btn-lg fw-bold">
-                                        <i class="bi bi-person-check-fill me-2"></i>Capture & Register
+
+                                <div class="scanner-actions">
+                                    <button id="btn-mark-attendance" class="btn btn-primary btn-lg btn-cta" type="button">
+                                        <i class="bi bi-person-check"></i><span>Scan &amp; Mark Attendance</span>
                                     </button>
+                                    <div class="legend" aria-label="Overlay colour legend">
+                                        <span><i class="legend-dot tone-success"></i>Marked</span>
+                                        <span><i class="legend-dot tone-warning"></i>Already marked</span>
+                                        <span><i class="legend-dot tone-neutral"></i>Unknown</span>
+                                    </div>
                                 </div>
-                            </form>
+                            </div>
+                        </section>
+                    </div>
+
+                    <div class="col-xl-4">
+                        <div class="side-stack">
+                            <section class="panel">
+                                <div class="panel-header">
+                                    <div class="panel-title">
+                                        <span class="panel-icon tone-accent"><i class="bi bi-activity"></i></span>
+                                        <div>
+                                            <h2 class="panel-heading">Scan result</h2>
+                                            <p class="panel-caption" id="att-last-scan">No scan yet</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="panel-body" id="att-status-container" aria-live="polite">
+                                    <div id="att-idle-state" class="empty-state">
+                                        <div class="empty-icon"><i class="bi bi-person-bounding-box"></i></div>
+                                        <div class="empty-title">Ready to scan</div>
+                                        <p class="empty-text">Point the camera at the class and press <strong>Scan &amp; Mark Attendance</strong>. Every recognised student is checked in at once.</p>
+                                    </div>
+
+                                    <div id="att-result-state" class="d-none">
+                                        <div id="att-status-badge" class="app-alert"></div>
+                                        <div class="result-stats">
+                                            <div class="result-stat tone-success"><span class="result-stat-value" id="att-count-marked">0</span><span class="result-stat-label">Marked</span></div>
+                                            <div class="result-stat tone-warning"><span class="result-stat-value" id="att-count-already">0</span><span class="result-stat-label">Already</span></div>
+                                            <div class="result-stat tone-neutral"><span class="result-stat-value" id="att-count-unknown">0</span><span class="result-stat-label">Unknown</span></div>
+                                        </div>
+                                        <div id="att-faces-list" class="face-list"></div>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section class="panel">
+                                <div class="panel-header">
+                                    <div class="panel-title">
+                                        <span class="panel-icon tone-success"><i class="bi bi-clock-history"></i></span>
+                                        <div>
+                                            <h2 class="panel-heading">Today's check-ins</h2>
+                                            <p class="panel-caption">Most recent first</p>
+                                        </div>
+                                    </div>
+                                    <span class="count-pill" id="today-count">0</span>
+                                </div>
+                                <ul class="activity-feed" id="today-feed"></ul>
+                            </section>
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
 
-        <!-- ATTENDANCE LOGS & STUDENTS TAB -->
-        <div class="tab-pane fade" id="records-pane" role="tabpanel">
-            <div class="row">
-                <div class="col-md-6 mb-4">
-                    <div class="card shadow-sm border-0">
-                        <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                            <span class="fw-bold text-dark"><i class="bi bi-people me-2"></i>Registered Students</span>
-                            <button id="btn-refresh-students" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
-                        </div>
-                        <div class="card-body p-0">
-                            <div class="table-responsive" style="max-height: 400px;">
-                                <table class="table table-hover mb-0">
-                                    <thead class="table-light">
-                                        <tr>
-                                            <th>ID</th>
-                                            <th>Reg No</th>
-                                            <th>Name</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="students-table-body">
-                                        <tr><td colspan="3" class="text-center text-muted py-3">No students registered yet.</td></tr>
-                                    </tbody>
-                                </table>
+            <!-- ============ REGISTER STUDENT ============ -->
+            <div class="tab-pane fade" id="register-pane" role="tabpanel" aria-labelledby="register-tab">
+                <div class="row g-4">
+                    <div class="col-xl-7">
+                        <section class="panel">
+                            <div class="panel-header">
+                                <div class="panel-title">
+                                    <span class="panel-icon"><i class="bi bi-camera"></i></span>
+                                    <div>
+                                        <h2 class="panel-heading">Face capture</h2>
+                                        <p class="panel-caption">The largest face in frame is enrolled</p>
+                                    </div>
+                                </div>
+                                <span id="reg-stream-label" class="source-pill"><i class="bi bi-airplane-engines"></i>Drone feed</span>
                             </div>
-                        </div>
+                            <div class="panel-body">
+                                <div class="viewport" id="reg-viewport">
+                                    <img id="reg-drone-img" class="viewport-media" alt="Drone camera stream" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">
+                                    <video id="reg-video" autoplay playsinline muted class="viewport-media d-none"></video>
+                                    <canvas id="reg-canvas" class="d-none"></canvas>
+                                    <div id="reg-face-overlay" class="face-overlay"></div>
+                                    <canvas id="reg-overlay-canvas" class="face-overlay-canvas"></canvas>
+                                    <div class="scan-line"></div>
+                                    <div class="hud" aria-hidden="true">
+                                        <span class="hud-corner tl"></span><span class="hud-corner tr"></span>
+                                        <span class="hud-corner bl"></span><span class="hud-corner br"></span>
+                                        <div class="hud-chip hud-tl"><span class="live-dot"></span>Live · <span class="hud-source">Drone</span></div>
+                                        <div class="hud-chip hud-tr mono hud-clock">--:--:--</div>
+                                        <div class="hud-chip hud-bl detect-chip" id="reg-detect-chip"><span class="detect-dot"></span><span class="detect-text">Searching for faces…</span></div>
+                                    </div>
+                                </div>
+
+                                <div class="capture-tips">
+                                    <div class="tip"><i class="bi bi-brightness-high"></i><span>Even, bright lighting</span></div>
+                                    <div class="tip"><i class="bi bi-eye"></i><span>Look straight at the lens</span></div>
+                                    <div class="tip"><i class="bi bi-person"></i><span>One person in frame</span></div>
+                                </div>
+                            </div>
+                        </section>
                     </div>
-                </div>
 
-                <div class="col-md-6 mb-4">
-                    <div class="card shadow-sm border-0">
-                        <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                            <span class="fw-bold text-dark"><i class="bi bi-clock-history me-2"></i>Attendance Log</span>
-                            <button id="btn-refresh-logs" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
-                        </div>
-                        <div class="card-body p-0">
-                            <div class="table-responsive" style="max-height: 400px;">
-                                <table class="table table-hover mb-0">
-                                    <thead class="table-light">
-                                        <tr>
-                                            <th>Reg No</th>
-                                            <th>Name</th>
-                                            <th>Timestamp</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="attendance-table-body">
-                                        <tr><td colspan="3" class="text-center text-muted py-3">No attendance logs yet.</td></tr>
-                                    </tbody>
-                                </table>
+                    <div class="col-xl-5">
+                        <section class="panel">
+                            <div class="panel-header">
+                                <div class="panel-title">
+                                    <span class="panel-icon tone-accent"><i class="bi bi-person-vcard"></i></span>
+                                    <div>
+                                        <h2 class="panel-heading">Student details</h2>
+                                        <p class="panel-caption">Fill in, then capture from the live feed</p>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
+                            <div class="panel-body">
+                                <div class="id-card" id="reg-id-card">
+                                    <div class="id-photo" id="reg-id-photo"><i class="bi bi-person"></i></div>
+                                    <div class="id-info">
+                                        <div class="id-name" id="reg-id-name">Student name</div>
+                                        <div class="id-reg mono" id="reg-id-reg">REG-0000-000</div>
+                                        <span class="id-status" id="reg-id-status"><i class="bi bi-pencil"></i>Draft</span>
+                                    </div>
+                                </div>
+
+                                <form id="reg-form" novalidate>
+                                    <div class="mb-3">
+                                        <label for="reg-name" class="form-label">Full name</label>
+                                        <div class="input-icon input-icon-lg">
+                                            <i class="bi bi-person"></i>
+                                            <input type="text" class="form-control form-control-lg" id="reg-name" placeholder="e.g. John Doe" autocomplete="off" required>
+                                            <div class="invalid-feedback">Enter the student's full name.</div>
+                                        </div>
+                                    </div>
+                                    <div class="mb-4">
+                                        <label for="reg-id" class="form-label">Registration number</label>
+                                        <div class="input-icon input-icon-lg">
+                                            <i class="bi bi-hash"></i>
+                                            <input type="text" class="form-control form-control-lg mono" id="reg-id" placeholder="e.g. REG-2025-001" autocomplete="off" required>
+                                            <div class="invalid-feedback">Enter a registration number.</div>
+                                        </div>
+                                    </div>
+                                    <div id="reg-alert" class="app-alert d-none" role="alert"></div>
+                                    <div class="d-grid">
+                                        <button type="submit" id="btn-register-student" class="btn btn-primary btn-lg btn-cta">
+                                            <i class="bi bi-camera"></i><span>Capture &amp; Register</span>
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </section>
                     </div>
                 </div>
             </div>
-        </div>
 
-    </div>
+            <!-- ============ RECORDS ============ -->
+            <div class="tab-pane fade" id="records-pane" role="tabpanel" aria-labelledby="records-tab">
+                <div class="stats-grid">
+                    <div class="stat-tile">
+                        <span class="stat-icon"><i class="bi bi-people"></i></span>
+                        <div class="stat-body">
+                            <div class="stat-label">Registered students</div>
+                            <div class="stat-value" id="stat-students">0</div>
+                            <div class="stat-sub">Enrolled face profiles</div>
+                        </div>
+                    </div>
+                    <div class="stat-tile">
+                        <span class="stat-icon tone-success"><i class="bi bi-person-check"></i></span>
+                        <div class="stat-body">
+                            <div class="stat-label">Present today</div>
+                            <div class="stat-value" id="stat-present">0</div>
+                            <div class="stat-sub" id="stat-present-sub">of 0 registered</div>
+                        </div>
+                    </div>
+                    <div class="stat-tile">
+                        <span class="stat-icon tone-accent"><i class="bi bi-pie-chart"></i></span>
+                        <div class="stat-body">
+                            <div class="stat-label">Attendance rate</div>
+                            <div class="stat-value" id="stat-rate">0%</div>
+                            <div class="meter"><span id="stat-rate-meter"></span></div>
+                        </div>
+                    </div>
+                    <div class="stat-tile">
+                        <span class="stat-icon tone-warning"><i class="bi bi-journal-text"></i></span>
+                        <div class="stat-body">
+                            <div class="stat-label">Total check-ins</div>
+                            <div class="stat-value" id="stat-logs">0</div>
+                            <div class="stat-sub" id="stat-logs-sub">across 0 days</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row g-4">
+                    <div class="col-xxl-5">
+                        <section class="panel">
+                            <div class="panel-header">
+                                <div class="panel-title">
+                                    <span class="panel-icon"><i class="bi bi-people"></i></span>
+                                    <div>
+                                        <h2 class="panel-heading">Registered students</h2>
+                                        <p class="panel-caption" id="students-caption">0 students</p>
+                                    </div>
+                                </div>
+                                <button id="btn-refresh-students" class="btn btn-ghost btn-sm" type="button"><i class="bi bi-arrow-clockwise"></i>Refresh</button>
+                            </div>
+                            <div class="panel-toolbar">
+                                <div class="input-icon flex-grow-1">
+                                    <i class="bi bi-search"></i>
+                                    <input type="search" class="form-control" id="student-search" placeholder="Search by name or reg no" aria-label="Search students">
+                                </div>
+                            </div>
+                            <div class="table-wrap">
+                                <table class="table app-table">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col">Student</th>
+                                            <th scope="col">Reg No</th>
+                                            <th scope="col">Today</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="students-table-body"></tbody>
+                                </table>
+                            </div>
+                        </section>
+                    </div>
+
+                    <div class="col-xxl-7">
+                        <section class="panel">
+                            <div class="panel-header">
+                                <div class="panel-title">
+                                    <span class="panel-icon tone-success"><i class="bi bi-clock-history"></i></span>
+                                    <div>
+                                        <h2 class="panel-heading">Attendance log</h2>
+                                        <p class="panel-caption" id="logs-caption">0 entries</p>
+                                    </div>
+                                </div>
+                                <div class="d-flex gap-2">
+                                    <button id="btn-export-logs" class="btn btn-ghost btn-sm" type="button"><i class="bi bi-download"></i>Export CSV</button>
+                                    <button id="btn-refresh-logs" class="btn btn-ghost btn-sm" type="button"><i class="bi bi-arrow-clockwise"></i>Refresh</button>
+                                </div>
+                            </div>
+                            <div class="panel-toolbar">
+                                <div class="input-icon flex-grow-1">
+                                    <i class="bi bi-search"></i>
+                                    <input type="search" class="form-control" id="log-search" placeholder="Search by name or reg no" aria-label="Search attendance log">
+                                </div>
+                                <select class="form-select log-date-select" id="log-date-filter" aria-label="Filter by date">
+                                    <option value="all">All dates</option>
+                                    <option value="today">Today</option>
+                                </select>
+                            </div>
+                            <div class="table-wrap">
+                                <table class="table app-table">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col">Student</th>
+                                            <th scope="col">Reg No</th>
+                                            <th scope="col">Date</th>
+                                            <th scope="col">Time</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="attendance-table-body"></tbody>
+                                </table>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
 </div>
 
-<!-- Drone Configuration Modal -->
+<!-- ============ STREAM SETTINGS MODAL ============ -->
 <div class="modal fade" id="droneConfigModal" tabindex="-1" aria-labelledby="droneConfigModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
-            <div class="modal-header bg-primary text-white">
-                <h5 class="modal-title fw-bold" id="droneConfigModalLabel"><i class="bi bi-sliders me-2"></i>Drone Camera Settings</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            <div class="modal-header">
+                <div class="d-flex align-items-center gap-3">
+                    <span class="panel-icon panel-icon-lg"><i class="bi bi-broadcast-pin"></i></span>
+                    <div>
+                        <h5 class="modal-title" id="droneConfigModalLabel">Stream settings</h5>
+                        <p class="panel-caption mb-0">Where the server pulls the drone feed from</p>
+                    </div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
                 <form id="drone-config-form">
-                    <div class="mb-3">
-                        <label for="drone-url-input" class="form-label fw-semibold">Drone Stream Source URL / Device Index</label>
-                        <input type="text" class="form-control" id="drone-url-input" placeholder="rtsp://192.168.1.1:554/live or 0 or http://..." required>
-                        <div class="form-text">
-                            Supports RTSP (e.g., <code>rtsp://192.168.1.10:554/stream</code>), UDP/HTTP streams, or camera index (<code>0</code>, <code>1</code>).
-                        </div>
+                    <label for="drone-url-input" class="form-label">Stream source URL or device index</label>
+                    <div class="input-icon input-icon-lg">
+                        <i class="bi bi-link-45deg"></i>
+                        <input type="text" class="form-control form-control-lg mono" id="drone-url-input" placeholder="rtsp://192.168.1.1:554/live" autocomplete="off" required>
                     </div>
-                    <div id="drone-config-alert" class="alert d-none" role="alert"></div>
-                    <div class="d-flex justify-content-end gap-2">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-primary fw-bold">Save & Reconnect</button>
+                    <div class="preset-row">
+                        <span class="preset-label">Quick fill</span>
+                        <button type="button" class="preset-chip" data-preset="0">Camera 0</button>
+                        <button type="button" class="preset-chip" data-preset="1">Camera 1</button>
+                        <button type="button" class="preset-chip" data-preset="rtsp://192.168.1.1:554/live">RTSP</button>
+                        <button type="button" class="preset-chip" data-preset="rtsp://127.0.0.1:8554/drone">Local relay</button>
+                    </div>
+                    <p class="form-hint">
+                        Accepts RTSP (<code>rtsp://…</code>), RTMP, UDP or HTTP streams, a video file path, or a camera index such as <code>0</code> or <code>1</code>.
+                    </p>
+                    <div id="drone-config-alert" class="app-alert d-none" role="alert"></div>
+                    <div class="d-flex justify-content-end gap-2 mt-4">
+                        <button type="button" class="btn btn-ghost" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-arrow-repeat me-1"></i>Save &amp; Reconnect</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
 </div>
+
+<div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-stack"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>

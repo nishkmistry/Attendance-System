@@ -13,7 +13,7 @@ An automated, web-based **Facial Attendance System** built with **Python**, **Fl
   * **OpenCV (`cv2`)**: Used for video stream decoding, frame capture, and Haar Cascade face detection.
 * **Drone Camera Integration:**
   * Supports direct video feeds from Drone camera streams (RTSP, UDP, HTTP MJPEG stream, or video device index).
-* **Frontend UI:** HTML5, CSS3, JavaScript (Fetch API, Bootstrap 5, live stream player with camera source switcher).
+* **Frontend UI:** HTML5, CSS3, JavaScript (Fetch API, Bootstrap 5). Dashboard layout with light/dark themes, live HUD camera viewport with face tracking overlays, today's check-in feed, searchable records and CSV export.
 
 ---
 
@@ -78,7 +78,7 @@ You can configure the Drone Camera Stream source in two ways:
    ```
 2. **Via Web Interface:**
    * Open the web app in your browser.
-   * Click **"Drone Stream Settings"** in the top navigation bar.
+   * Click **"Stream settings"** at the bottom of the sidebar (or the sliders icon in the top bar on small screens).
    * Enter your Drone's RTSP stream URL (e.g., `rtsp://192.168.1.100:554/stream`), HTTP MJPEG URL, or camera index (`0`), then click **"Save & Reconnect"**.
 
 ---
@@ -97,17 +97,17 @@ Open your web browser and navigate to `http://127.0.0.1:5000`.
 
 ### 3. Workflow Guide
 * **Select Camera Source:**
-  * Toggle between **Drone Camera Stream** or **Local Webcam** using the active camera toolbar.
+  * Toggle between **Drone** and **Webcam** using the source switch in the top bar.
 * **Registering a Student:**
-  1. Go to the **Student Registration** tab.
+  1. Open **Register Student** from the sidebar.
   2. Enter **Full Name** and **Registration Number**.
   3. Align the student's face in the live Drone/Webcam feed and click **"Capture & Register"**.
 * **Marking Attendance:**
-  1. Go to the **Mark Attendance** tab.
-  2. Position the student's face in front of the Drone/Webcam view and click **"Scan Face & Mark Attendance"**.
+  1. Open **Mark Attendance** from the sidebar.
+  2. Position the student's face in front of the Drone/Webcam view and click **"Scan & Mark Attendance"**.
   3. DeepFace will recognize the student and record attendance.
 * **Viewing Logs:**
-  1. Open the **Attendance Logs & Students** tab to inspect student records and timestamped attendance logs.
+  1. Open **Records** to see today's turnout, search registered students and the timestamped attendance log, filter by date, and export it as CSV.
 
 ---
 
