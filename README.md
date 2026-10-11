@@ -68,6 +68,8 @@ pip install -r requirements.txt
 
 ## 🚁 Drone Camera Setup & Configuration
 
+> **Using a DJI Mini 2 SE?** See **[DRONE_INTEGRATION.md](DRONE_INTEGRATION.md)** for step-by-step live streaming (DJI Fly RTMP → MediaMTX), screen-mirroring and recorded-footage setups.
+
 You can configure the Drone Camera Stream source in two ways:
 
 1. **Via Environment Variable:**
