@@ -60,7 +60,7 @@ def generate_drone_frames():
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index.html', model_name=face_system.model_name)
 
 @app.route('/video_feed')
 def video_feed():
